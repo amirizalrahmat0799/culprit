@@ -1,0 +1,398 @@
+# PostgreSQL and MySQL/MariaDB: errors from the server's own log and from client drivers.
+
+# ---- PostgreSQL ---------------------------------------------------------------------------------------
+
+[[rule]]
+id = "postgres.too-many-connections"
+title = "PostgreSQL has no free connection slots"
+examples = [
+  '2026-10-28 01:41:07.883 UTC [612] FATAL:  sorry, too many clients already',
+]
+severity = "critical"
+priority = 10
+tags = ["postgres", "database", "connections"]
+contains = ["too many clients already", "remaining connection slots are reserved"]
+explain = """
+PostgreSQL reached max_connections and refused new ones. Usually the connection pools of every app \
+instance together are bigger than the server allows, or connections leak."""
+fix = [
+  "See who holds connections: SELECT usename, application_name, state, count(*) FROM pg_stat_activity GROUP BY 1, 2, 3;",
+  "Add up the pool sizes of every instance; keep the total under max_connections.",
+  "Many 'idle in transaction' connections mean the app opens transactions and doesn't finish them.",
+  "With many app instances, put PgBouncer in front of the database.",
+]
+
+[[rule]]
+id = "postgres.relation-missing"
+title = "PostgreSQL table {table} does not exist"
+examples = [
+  '2026-10-28 01:41:09.120 UTC [655] ERROR:  relation "refunds" does not exist at character 15',
+]
+severity = "error"
+priority = 10
+tags = ["postgres", "database"]
+contains = ["does not exist"]
+regex = 'relation "([^"]+)" does not exist'
+captures = ["table"]
+explain = """
+A query used the table or view "{table}", and the database the app is connected to has none by that name \
+in its search_path. A migration didn't run, the app points at another database or schema, or the name's \
+case differs (unquoted names are lower case in PostgreSQL)."""
+fix = [
+  "Check the migrations ran against this database (flyway_schema_history, alembic_version, prisma _migrations ...).",
+  "Check the database and schema in the connection URL, and the search_path.",
+  "If the table was created with quotes and capitals (\"Orders\"), queries must quote it the same way.",
+]
+
+[[rule]]
+id = "postgres.column-missing"
+title = "PostgreSQL column {column} does not exist"
+examples = [
+  '2026-10-28 01:41:09.121 UTC [655] ERROR:  column "currency" does not exist at character 8',
+]
+severity = "error"
+priority = 10
+tags = ["postgres", "database"]
+contains = ["does not exist"]
+regex = 'column "?([^" ]+)"? does not exist'
+captures = ["column"]
+explain = """
+A query uses the column {column}, which the table doesn't have. Usually code that expects a new column is \
+running against a database that wasn't migrated yet, or a column was renamed."""
+fix = [
+  "Check the latest migration was applied to this database.",
+  "Deploy migrations before the code that needs them; keep old columns until no running version uses them.",
+]
+
+[[rule]]
+id = "postgres.database-missing"
+title = "PostgreSQL database {database} does not exist"
+examples = [
+  '2026-10-28 01:41:02.004 UTC [601] FATAL:  database "kedai" does not exist',
+]
+severity = "critical"
+priority = 11
+tags = ["postgres", "database", "startup"]
+contains = ["does not exist"]
+regex = 'database "([^"]+)" does not exist'
+captures = ["database"]
+explain = """
+The connection URL names the database "{database}", and the server has no database with that name."""
+fix = [
+  "Create it (createdb {database}), or fix the name in the URL.",
+  "In Docker, POSTGRES_DB only creates the database the first time the volume is initialised.",
+]
+
+[[rule]]
+id = "postgres.auth-failed"
+title = "PostgreSQL login failed for user {user}"
+examples = [
+  '2026-10-28 01:41:02.004 UTC [601] FATAL:  password authentication failed for user "kedai"',
+]
+severity = "critical"
+priority = 10
+tags = ["postgres", "database", "auth"]
+contains = ["password authentication failed", "no pg_hba.conf entry"]
+regex = '(?:password authentication failed for user|no pg_hba.conf entry for host "[^"]*", user) "([^"]+)"'
+captures = ["user"]
+explain = """
+PostgreSQL refused the login for {user}: the password is wrong, or pg_hba.conf doesn't allow this user \
+to connect from this address."""
+fix = [
+  "Check the password the app really uses; environment variables override config files.",
+  "In Docker, POSTGRES_PASSWORD only applies when the volume is created; an old volume keeps the old password.",
+  "For 'no pg_hba.conf entry', allow the client's address in pg_hba.conf and reload.",
+]
+
+[[rule]]
+id = "postgres.deadlock"
+title = "PostgreSQL deadlock detected"
+examples = [
+  '2026-10-28 01:45:13.551 UTC [702] ERROR:  deadlock detected',
+]
+severity = "error"
+priority = 10
+tags = ["postgres", "database", "locking"]
+contains = ["deadlock detected"]
+explain = """
+Two transactions each waited for a lock the other held, so PostgreSQL cancelled one of them. Transactions \
+that update the same rows in a different order cause this."""
+fix = [
+  "The server log's DETAIL lines show both processes and statements.",
+  "Lock or update rows in a consistent order (for example ORDER BY id with SELECT ... FOR UPDATE).",
+  "Keep transactions short, and retry the cancelled one.",
+]
+
+[[rule]]
+id = "postgres.unique-violation"
+title = "Duplicate value for unique constraint {constraint}"
+examples = [
+  '2026-10-28 01:46:00.010 UTC [703] ERROR:  duplicate key value violates unique constraint "orders_ref_key"',
+]
+severity = "warning"
+priority = 10
+tags = ["postgres", "database"]
+contains = ["duplicate key value violates unique constraint"]
+regex = 'duplicate key value violates unique constraint "([^"]+)"'
+captures = ["constraint"]
+explain = """
+An insert or update would have created a second row with the same key in {constraint}. Often double \
+submits or retries; sometimes a sequence that fell behind the data after an import."""
+fix = [
+  "If duplicates are expected, use INSERT ... ON CONFLICT, or answer 409 Conflict.",
+  "If the key comes from a sequence, reset it: SELECT setval('<seq>', (SELECT max(id) FROM <table>));",
+]
+
+[[rule]]
+id = "postgres.statement-timeout"
+title = "PostgreSQL cancelled a query that took too long"
+examples = [
+  '2026-10-28 01:47:30.400 UTC [710] ERROR:  canceling statement due to statement timeout',
+]
+severity = "error"
+priority = 10
+tags = ["postgres", "database", "performance"]
+contains = ["canceling statement due to statement timeout", "canceling statement due to lock timeout"]
+explain = """
+A query ran longer than statement_timeout (or waited longer than lock_timeout for a lock), so PostgreSQL \
+cancelled it."""
+fix = [
+  "Find the query and run EXPLAIN ANALYZE on it; look for missing indexes.",
+  "For lock timeouts, look for long transactions holding locks: pg_stat_activity and pg_locks.",
+]
+
+[[rule]]
+id = "postgres.connection-refused"
+title = "Can't connect to PostgreSQL at {address}"
+examples = [
+  'org.postgresql.util.PSQLException: Connection to localhost:5432 refused. Check that the hostname and port are correct and that the postmaster is accepting TCP/IP connections.',
+]
+severity = "error"
+symptom = true
+priority = 12
+tags = ["postgres", "database", "network"]
+contains = ["refused. check that the hostname and port are correct"]
+regex = 'Connection to (\S+) refused'
+captures = ["address"]
+explain = """
+Nothing accepted the connection at {address}. PostgreSQL isn't running yet (or crashed), or the host or \
+port is wrong. Inside a container, localhost means the container itself, not your machine or the \
+database container."""
+fix = [
+  "Check the database is up, and that the app waits for it (Compose: depends_on with condition: service_healthy).",
+  "In Docker Compose, use the service name as the host (db:5432), not localhost.",
+]
+
+[[rule]]
+id = "postgres.disk-full"
+title = "PostgreSQL ran out of disk space"
+examples = [
+  '2026-10-28 01:50:00.000 UTC [720] ERROR:  could not extend file "base/16384/16402": No space left on device',
+]
+severity = "critical"
+priority = 15
+tags = ["postgres", "database", "disk"]
+contains = ["could not extend file", "could not write to file"]
+explain = """
+PostgreSQL couldn't grow a table or write a file because the disk (or volume) is full. Writes fail until \
+space is freed, and the server may shut down."""
+fix = [
+  "Check free space where the data lives: df -h, and docker system df for Docker volumes.",
+  "Look for bloat and old WAL: replication slots that aren't consumed keep WAL forever.",
+]
+
+# ---- MySQL / MariaDB ----------------------------------------------------------------------------------
+
+[[rule]]
+id = "mysql.too-many-connections"
+title = "MySQL has no free connections"
+examples = [
+  'java.sql.SQLNonTransientConnectionException: Data source rejected establishment of connection,  message from server: "Too many connections"',
+]
+severity = "critical"
+priority = 10
+tags = ["mysql", "database", "connections"]
+contains = ["too many connections"]
+explain = """
+MySQL reached max_connections and refused new ones. The pools of all app instances together are larger \
+than the server allows, or connections leak or stay open sleeping."""
+fix = [
+  "See who holds them: SHOW PROCESSLIST; many 'Sleep' rows point at oversized pools or leaks.",
+  "Keep the sum of all pool sizes under max_connections (SHOW VARIABLES LIKE 'max_connections').",
+]
+
+[[rule]]
+id = "mysql.access-denied"
+title = "MySQL login failed for {user}"
+examples = [
+  '''
+java.sql.SQLException: Access denied for user 'kedai'@'172.18.0.4' (using password: YES)''',
+]
+severity = "critical"
+priority = 10
+tags = ["mysql", "database", "auth"]
+contains = ["access denied for user"]
+regex = "Access denied for user '([^']*)'@'([^']*)'"
+captures = ["user", "host"]
+explain = """
+MySQL refused {user} connecting from {host}. The password is wrong, or the account exists only for \
+another host ('{user}'@'localhost' is a different account from '{user}'@'%')."""
+fix = [
+  "List the accounts: SELECT user, host FROM mysql.user WHERE user = '{user}';",
+  "In Docker, MYSQL_PASSWORD only applies when the volume is first created.",
+]
+
+[[rule]]
+id = "mysql.table-missing"
+title = "MySQL table {table} doesn't exist"
+examples = [
+  '''
+java.sql.SQLSyntaxErrorException: Table 'kedai.refunds' doesn't exist''',
+]
+severity = "error"
+priority = 10
+tags = ["mysql", "database"]
+contains = ["doesn't exist"]
+regex = "Table '([^']+)' doesn't exist"
+captures = ["table"]
+explain = """
+The query uses {table}, which isn't in that database. A migration didn't run, the app is connected to \
+another database, or the name's case differs (table names are case-sensitive on Linux)."""
+fix = [
+  "Check the migrations ran against this database.",
+  "Check lower_case_table_names if the code was developed on Windows or macOS.",
+]
+
+[[rule]]
+id = "mysql.deadlock"
+title = "MySQL deadlock"
+examples = [
+  'com.mysql.cj.jdbc.exceptions.MySQLTransactionRollbackException: Deadlock found when trying to get lock; try restarting transaction',
+]
+severity = "error"
+priority = 10
+tags = ["mysql", "database", "locking"]
+contains = ["deadlock found when trying to get lock"]
+explain = """
+InnoDB found two transactions waiting on each other's locks and rolled one back."""
+fix = [
+  "SHOW ENGINE INNODB STATUS shows the latest deadlock with both statements.",
+  "Update rows in a consistent order, keep transactions short, and retry the rolled-back one.",
+]
+
+[[rule]]
+id = "mysql.lock-wait-timeout"
+title = "MySQL lock wait timeout"
+examples = [
+  'com.mysql.cj.jdbc.exceptions.MySQLTransactionRollbackException: Lock wait timeout exceeded; try restarting transaction',
+]
+severity = "error"
+priority = 10
+tags = ["mysql", "database", "locking"]
+contains = ["lock wait timeout exceeded"]
+explain = """
+A statement waited longer than innodb_lock_wait_timeout for a row lock that another transaction held."""
+fix = [
+  "Find the long transaction holding locks: SELECT * FROM information_schema.innodb_trx ORDER BY trx_started;",
+  "Look for transactions left open (no commit) or doing slow work while holding locks.",
+]
+
+[[rule]]
+id = "mysql.communications-link"
+title = "Lost or failed connection to MySQL"
+examples = [
+  'com.mysql.cj.jdbc.exceptions.CommunicationsException: Communications link failure',
+]
+severity = "error"
+symptom = true
+priority = 10
+tags = ["mysql", "database", "network"]
+contains = ["communications link failure", "server has gone away", "lost connection to mysql server"]
+explain = """
+The driver couldn't reach MySQL, or the connection was closed under it. MySQL is down or unreachable, or \
+the server closed a connection that sat idle longer than wait_timeout while the pool still held it."""
+fix = [
+  "If MySQL is up, make the pool retire connections sooner than wait_timeout (Hikari: maxLifetime shorter than wait_timeout).",
+  "Check the host and port; in Docker Compose use the service name, not localhost.",
+  "For 'gone away' on big statements, check max_allowed_packet.",
+]
+
+[[rule]]
+id = "mysql.duplicate-entry"
+title = "Duplicate entry for key {key}"
+examples = [
+  '''
+java.sql.SQLIntegrityConstraintViolationException: Duplicate entry 'INV-1042' for key 'orders.ref'''',
+]
+severity = "warning"
+priority = 10
+tags = ["mysql", "database"]
+contains = ["duplicate entry"]
+regex = "Duplicate entry '[^']*' for key '([^']+)'"
+captures = ["key"]
+explain = """
+An insert or update would have created a second row with the same value for the unique key {key}."""
+fix = [
+  "If it's expected (retries, double submits), use INSERT ... ON DUPLICATE KEY UPDATE or answer 409 Conflict.",
+]
+
+# ---- SQLite ---------------------------------------------------------------------------------------------
+
+[[rule]]
+id = "sqlite.no-such-table"
+title = "SQLite table {table} doesn't exist"
+examples = [
+  'sqlite3.OperationalError: no such table: todos',
+]
+severity = "error"
+priority = 10
+tags = ["sqlite", "database"]
+contains = ["no such table"]
+regex = 'no such table: (\S+)'
+captures = ["table"]
+explain = """
+The SQLite file has no table {table}. Migrations haven't been run on it, or the app opened a different \
+(often new, empty) file because of a relative path."""
+fix = [
+  "Run the migrations (Django: python manage.py migrate).",
+  "Use an absolute path for the database file; a relative path depends on the working directory.",
+]
+
+[[rule]]
+id = "sqlite.locked"
+title = "SQLite database is locked"
+examples = [
+  'sqlite3.OperationalError: database is locked',
+]
+severity = "error"
+priority = 10
+tags = ["sqlite", "database"]
+contains = ["database is locked"]
+explain = """
+Another connection was writing, and this one gave up waiting. SQLite allows one writer at a time."""
+fix = [
+  "Keep write transactions short, and set a busy timeout.",
+  "Turn on WAL mode (PRAGMA journal_mode=WAL) so readers don't block the writer.",
+  "With many concurrent writers, move to PostgreSQL or MySQL.",
+]
+
+[[rule]]
+id = "postgres.permission-denied"
+title = "PostgreSQL user lacks permission on {object}"
+examples = [
+  '2026-10-28 01:51:00.000 UTC [721] ERROR:  permission denied for table orders',
+]
+severity = "error"
+priority = 10
+tags = ["postgres", "database", "auth"]
+contains = ["permission denied for"]
+regex = 'permission denied for (?:table|relation|schema|sequence|view|function|database) (\S+)'
+captures = ["object"]
+explain = """
+The database user the app connects as isn't allowed to use {object}. Often the table was created by \
+another user (a migration tool, or an admin), and the app's user was never granted access."""
+fix = [
+  "Grant it, for example: GRANT SELECT, INSERT, UPDATE, DELETE ON {object} TO <app_user>;",
+  "For sequences behind serial or identity columns: GRANT USAGE ON SEQUENCE <seq> TO <app_user>;",
+  "To cover tables created later: ALTER DEFAULT PRIVILEGES ... GRANT ... TO <app_user>;",
+]

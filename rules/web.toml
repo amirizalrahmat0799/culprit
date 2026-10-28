@@ -1,0 +1,143 @@
+# nginx, Apache and HTTP access logs.
+
+[[rule]]
+id = "nginx.upstream-refused"
+title = "nginx can't reach the app behind it ({upstream})"
+examples = [
+  '2026/10/28 09:41:12 [error] 29#29: *1 connect() failed (111: Connection refused) while connecting to upstream, client: 172.18.0.1, server: _, request: "GET /api/orders HTTP/1.1", upstream: "http://172.18.0.3:8080/api/orders", host: "localhost"',
+]
+severity = "error"
+symptom = true
+priority = 10
+tags = ["nginx", "proxy", "network"]
+contains = ["while connecting to upstream"]
+regex = 'connect\(\) failed \(111: Connection refused\) while connecting to upstream.*?upstream: "(\w+://[^/"]+)'
+captures = ["upstream"]
+level = "any"
+explain = """
+nginx tried to pass the request to {upstream} and nothing accepted the connection, so the client got 502 \
+Bad Gateway. The app behind nginx is down, still starting, or listening on another address or port."""
+fix = [
+  "Check the app is running and listening on that address: curl -v {upstream}",
+  "If the app runs in a container, it must listen on 0.0.0.0, not 127.0.0.1.",
+  "The real error is usually in the app's own log at the same time.",
+]
+
+[[rule]]
+id = "nginx.upstream-timeout"
+title = "The app behind nginx answered too slowly"
+examples = [
+  '2026/10/28 09:43:01 [error] 29#29: *77 upstream timed out (110: Connection timed out) while reading response header from upstream, client: 172.18.0.1, server: _, request: "GET /api/report HTTP/1.1", upstream: "http://172.18.0.3:8080/api/report", host: "localhost"',
+]
+severity = "error"
+symptom = true
+priority = 10
+tags = ["nginx", "proxy", "performance"]
+contains = ["upstream timed out"]
+regex = 'upstream timed out.*?upstream: "(\w+://[^/"]+)'
+captures = ["upstream"]
+level = "any"
+explain = """
+{upstream} accepted the request but didn't answer within proxy_read_timeout (60 s by default), so the \
+client got 504 Gateway Timeout. The app is slow, stuck, or waiting on something (a database, a pool, \
+another service)."""
+fix = [
+  "Find the slow requests in the app's log at the same time.",
+  "Only raise proxy_read_timeout for endpoints that are meant to be slow.",
+]
+
+[[rule]]
+id = "nginx.no-live-upstreams"
+title = "nginx has no healthy app server to send requests to"
+examples = [
+  '2026/10/28 09:41:20 [error] 29#29: *9 no live upstreams while connecting to upstream, client: 172.18.0.1, server: _, request: "GET / HTTP/1.1", upstream: "http://app/", host: "localhost"',
+]
+severity = "error"
+symptom = true
+priority = 11
+tags = ["nginx", "proxy"]
+contains = ["no live upstreams"]
+level = "any"
+explain = """
+Every server in the upstream group was marked as failed after errors, so nginx stopped trying them for a \
+while (fail_timeout) and answered 502 directly."""
+fix = [
+  "Look at the errors just before this one; they show why each server was marked down.",
+]
+
+[[rule]]
+id = "nginx.upstream-prematurely-closed"
+title = "The app closed the connection before answering"
+examples = [
+  '2026/10/28 09:44:00 [error] 29#29: *80 upstream prematurely closed connection while reading response header from upstream, client: 172.18.0.1, server: _, request: "GET /api/orders HTTP/1.1", upstream: "http://172.18.0.3:8080/api/orders", host: "localhost"',
+]
+severity = "error"
+symptom = true
+priority = 10
+tags = ["nginx", "proxy"]
+contains = ["upstream prematurely closed connection"]
+level = "any"
+explain = """
+The app behind nginx accepted the request and then closed the connection without a complete answer. It \
+probably crashed or restarted mid-request, or hit its own timeout."""
+fix = [
+  "Look at the app's log at the same time for a crash or restart.",
+]
+
+[[rule]]
+id = "nginx.body-too-large"
+title = "Request body larger than nginx allows"
+examples = [
+  '2026/10/28 09:45:00 [error] 29#29: *81 client intended to send too large body: 5242880 bytes, client: 172.18.0.1, server: _, request: "POST /api/upload HTTP/1.1", host: "localhost"',
+]
+severity = "warning"
+priority = 10
+tags = ["nginx", "proxy"]
+contains = ["client intended to send too large body"]
+level = "any"
+explain = """
+A client sent a body bigger than client_max_body_size (1 MB by default), so nginx answered 413 without \
+passing it on. Usually a file upload."""
+fix = [
+  "Raise client_max_body_size for the upload location, e.g. client_max_body_size 20m;",
+]
+
+[[rule]]
+id = "http.bad-gateway"
+title = "HTTP {status} responses"
+examples = [
+  '172.18.0.1 - - [28/Oct/2026:09:41:12 +0800] "GET /api/orders HTTP/1.1" 502 157 "-" "curl/8.5.0"',
+]
+severity = "error"
+symptom = true
+priority = 10
+tags = ["http", "proxy"]
+field = "status"
+values = ["502", "503", "504"]
+level = "any"
+explain = """
+The proxy or load balancer couldn't get an answer from the app behind it (502 Bad Gateway, 503 Service \
+Unavailable, 504 Gateway Timeout). It's a sign of a problem in the app, not the cause."""
+fix = [
+  "Look at the app's log at the time of the first one.",
+  "Many at once after a deploy usually means the new version didn't start, or started slower than the health checks allow.",
+]
+
+[[rule]]
+id = "http.server-error"
+title = "HTTP {status} responses"
+examples = [
+  '172.18.0.1 - - [28/Oct/2026:09:41:13 +0800] "POST /api/orders HTTP/1.1" 500 312 "-" "okhttp/4.12.0"',
+]
+severity = "error"
+priority = 5
+tags = ["http"]
+field = "status"
+values = ["500", "501", "505", "507", "508"]
+level = "any"
+explain = """
+The server answered with a 5xx error, meaning the request failed inside it. The cause is in the \
+application's own log for the same request."""
+fix = [
+  "Match the time (or a request id) with the application's error log.",
+]

@@ -21,11 +21,17 @@ jobs:
         run: cmake --build build --config Release -j 4
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
-      - name: Plain output of every sample
+      - name: Plain output and analysis of every sample
         shell: bash
         run: |
-          exe=$(find build -name 'culprit' -o -name 'culprit.exe' | grep -v '\.dir' | head -1)
+          exe=$(find build -name 'culprit' -o -name 'culprit.exe' | grep -v '\.dir' | grep -v '_tests' | head -1)
           "$exe" --version
           for f in testdata/*; do "$exe" --plain --no-color "$f" > /dev/null; done
           "$exe" --plain --no-color --filter "level>=error" testdata/spring-boot.log | grep -q "in your code\|OrderService"
           cat testdata/compose.log | "$exe" --plain --no-color | grep -q "backend-1"
+          "$exe" rules --check
+          for f in testdata/*; do "$exe" analyze --format json "$f" > /dev/null; done
+          "$exe" analyze --no-color testdata/incident-migration.log | grep -q "Database migration V7__add_refunds.sql failed"
+          if "$exe" analyze --fail-on error testdata/incident-migration.log > /dev/null; then
+            echo "--fail-on error should have failed"; exit 1
+          fi

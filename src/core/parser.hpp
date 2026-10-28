@@ -42,6 +42,8 @@ private:
     Entry current_;
     bool pending_ = false;
     bool in_stack_ = false;
+    uint32_t line_ = 0;
+    bool prefixed_ = false;  // the pending entry came with a Compose/kubectl prefix
 };
 
 /// Parses a single line on its own (no multi-line handling). Exposed for tests.

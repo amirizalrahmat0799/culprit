@@ -112,6 +112,7 @@ bool parse_json(std::string_view text, Entry& e) {
                     if (auto ts = parse_time_value(*t)) {
                         wrapped.time_text = ts->clock;
                         wrapped.epoch_ms = ts->epoch_ms;
+                        wrapped.time_zoned = ts->zoned;
                     }
                 }
             }
@@ -133,9 +134,11 @@ bool parse_json(std::string_view text, Entry& e) {
         if (auto ts = parse_time_value(*t)) {
             e.time_text = ts->clock;
             e.epoch_ms = ts->epoch_ms;
+            e.time_zoned = ts->zoned;
         } else if (auto ts2 = parse_timestamp(*t)) {
             e.time_text = ts2->clock;
             e.epoch_ms = ts2->epoch_ms;
+            e.time_zoned = ts2->zoned;
         }
     }
     if (const std::string* l = take({"level", "log.level", "severity", "lvl", "levelname", "level_name",
@@ -219,6 +222,7 @@ bool parse_logfmt(std::string_view text, Entry& e) {
             if (auto ts = parse_time_value(v)) {
                 e.time_text = ts->clock;
                 e.epoch_ms = ts->epoch_ms;
+                e.time_zoned = ts->zoned;
                 continue;
             }
         }
@@ -266,6 +270,7 @@ size_t read_text_timestamp(std::string_view s, Entry& e) {
     }
     e.time_text = ts->clock;
     e.epoch_ms = ts->epoch_ms;
+    e.time_zoned = ts->zoned;
     return n;
 }
 
@@ -428,6 +433,7 @@ bool parse_access_log(std::string_view text, Entry& e) {
     if (auto ts = parse_timestamp(iso)) {
         e.time_text = ts->clock;
         e.epoch_ms = ts->epoch_ms;
+        e.time_zoned = ts->zoned;
     }
 
     int code = (status[0] - '0') * 100 + (status[1] - '0') * 10 + (status[2] - '0');
@@ -524,6 +530,9 @@ bool Parser::is_continuation(std::string_view text, const std::string& prefix_so
         // a line from another Compose service can't continue this one
         if (!prefix_source.empty()) return false;
     }
+    // Compose prints its own lines ("app-1 exited with code 1") without a prefix; they never continue a
+    // service's entry
+    if (prefixed_ && prefix_source.empty()) return false;
     if (text.empty()) return in_stack_;
     if (is_space(text[0])) return true;  // "\tat com.example...", "  File \"app.py\", line 3"
     if (starts_with(text, "Caused by:") || starts_with(text, "Suppressed:") || starts_with(text, "... ") ||
@@ -550,6 +559,7 @@ bool Parser::is_continuation(std::string_view text, const std::string& prefix_so
 void Parser::feed(std::string_view raw_line, std::vector<Entry>& out) {
     std::string_view line = raw_line;
     if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+    ++line_;
 
     std::string prefix_source;
     std::string_view text = strip_prefix(line, prefix_source);
@@ -576,6 +586,8 @@ void Parser::feed(std::string_view raw_line, std::vector<Entry>& out) {
 
     flush(out);
     current_ = parse_line(line);
+    current_.line = line_;
+    prefixed_ = !prefix_source.empty();
     if (current_.source.empty()) current_.source = source_;
     pending_ = true;
     in_stack_ = !current_.stack.empty() || starts_with(trim(text), "panic:");

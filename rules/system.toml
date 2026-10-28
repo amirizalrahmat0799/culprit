@@ -1,0 +1,191 @@
+# Problems any program can hit: network, DNS, TLS, files and limits. Kept at a low priority, so the
+# rules for a particular language or tool win when both match.
+
+[[rule]]
+id = "net.address-in-use"
+title = "Address already in use"
+examples = [
+  'listen tcp :8080: bind: address already in use',
+]
+severity = "critical"
+priority = -10
+tags = ["network", "startup"]
+contains = ["address already in use", "bindexception"]
+explain = """
+A server couldn't listen on its port because another process already does. Often an earlier copy of the \
+same program that's still running, or another service set to the same port."""
+fix = [
+  "Find it: lsof -i :<port> or ss -ltnp (Linux, macOS), netstat -ano | findstr :<port> (Windows).",
+  "Stop it, or move one of them to another port.",
+]
+
+[[rule]]
+id = "net.connection-refused"
+title = "Connection refused"
+examples = [
+  'java.net.ConnectException: Connection refused',
+]
+severity = "error"
+symptom = true
+priority = -10
+tags = ["network"]
+contains = ["connection refused", "connectexception"]
+explain = """
+Nothing accepted the connection at that address. The service there isn't running, isn't ready yet, or \
+the host or port is wrong. Inside a container, localhost is the container itself. This is usually a \
+consequence: look for why the other service is down."""
+fix = [
+  "Check the target service is up and listening on that port.",
+  "In Docker Compose and Kubernetes, use the service name as the host, and wait until it's healthy.",
+]
+
+[[rule]]
+id = "net.timeout"
+title = "Network timeout"
+examples = [
+  'java.net.SocketTimeoutException: Read timed out',
+]
+severity = "warning"
+symptom = true
+priority = -10
+tags = ["network"]
+contains = ["sockettimeoutexception", "read timed out", "connect timed out", "connection timed out", "timeoutexception"]
+explain = """
+A connection or an answer took longer than the time limit. The other side is slow or overloaded, or a \
+firewall silently drops the traffic (then connections time out instead of being refused)."""
+fix = [
+  "Check the other service's latency and log at that time.",
+  "Make sure the timeout is set on purpose; some clients wait forever by default.",
+]
+
+[[rule]]
+id = "net.dns"
+title = "Host name couldn't be resolved"
+examples = [
+  'java.net.UnknownHostException: payments-api: Name or service not known',
+]
+severity = "error"
+priority = -10
+tags = ["network", "dns"]
+contains = ["unknownhostexception", "name or service not known", "temporary failure in name resolution", "nodename nor servname provided", "getaddrinfo failed"]
+explain = """
+DNS couldn't turn a host name into an address. The name is wrong or comes from a missing setting, it only \
+exists inside another network (a Compose or Kubernetes service name), or DNS is unreachable."""
+fix = [
+  "Check the host name and where it's configured.",
+  "Try it from the same machine or container: nslookup <host>, or getent hosts <host>.",
+]
+
+[[rule]]
+id = "tls.untrusted"
+title = "TLS certificate isn't trusted"
+examples = [
+  'Get "https://api.example.com/v1/rates": tls: failed to verify certificate: x509: certificate signed by unknown authority',
+]
+severity = "error"
+priority = -5
+tags = ["tls", "network"]
+contains = ["certificate verify failed", "x509: certificate signed by unknown authority", "self_signed_cert_in_chain", "unable_to_verify_leaf_signature", "self signed certificate in certificate chain", "unable to get local issuer certificate"]
+explain = """
+The client couldn't verify the server's certificate: it's self-signed, signed by a private (company) CA \
+the client doesn't know, or the server doesn't send its intermediate certificates."""
+fix = [
+  "Inspect the chain: openssl s_client -connect <host>:443 -showcerts",
+  "Add the company CA to the client's trust store (Node: NODE_EXTRA_CA_CERTS, Python: SSL_CERT_FILE or certifi, Go and curl: the system store).",
+  "Don't turn certificate checks off to make it go away.",
+]
+
+[[rule]]
+id = "tls.expired"
+title = "TLS certificate has expired"
+examples = [
+  'Error: certificate has expired',
+]
+severity = "critical"
+priority = -4
+tags = ["tls", "network"]
+contains = ["certificate has expired", "cert_has_expired", "certificate expired", "x509: certificate has expired"]
+explain = """
+The server's certificate (or one in its chain) is past its expiry date, so clients refuse to connect."""
+fix = [
+  "Check the dates: openssl s_client -connect <host>:443 | openssl x509 -noout -dates",
+  "Renew it, and check that automatic renewal (certbot, cert-manager) is working.",
+  "If the date looks valid, check the clock on the client machine.",
+]
+
+[[rule]]
+id = "sys.too-many-open-files"
+title = "Too many open files"
+examples = [
+  'accept tcp [::]:8080: accept4: too many open files; retrying in 5ms',
+]
+severity = "error"
+priority = -10
+tags = ["system"]
+contains = ["too many open files"]
+level = "any"
+explain = """
+The process reached its limit of open files and sockets. Something opens them without closing them (a \
+leak), or the limit is too low for the load."""
+fix = [
+  "Count open files: ls /proc/<pid>/fd | wc -l, or lsof -p <pid>.",
+  "Look for streams, files, HTTP responses and connections that aren't closed.",
+  "Raise the limit (ulimit -n, LimitNOFILE in systemd, nofile in Docker) only if the load needs it.",
+]
+
+[[rule]]
+id = "sys.permission-denied"
+title = "Permission denied"
+examples = [
+  'open /data/uploads/report.pdf: permission denied',
+]
+severity = "error"
+priority = -10
+tags = ["system", "files"]
+contains = ["permission denied", "eacces", "accessdeniedexception"]
+explain = """
+The process wasn't allowed to open, write or run something. Common in containers that run as a non-root \
+user with files or volumes owned by root, and for ports below 1024."""
+fix = [
+  "Find the path in the message and check its owner and mode: ls -l <path>.",
+  "In containers, match the volume's owner to the user the app runs as.",
+  "Ports below 1024 need root or CAP_NET_BIND_SERVICE; use a higher port behind a proxy.",
+]
+
+[[rule]]
+id = "sys.no-space"
+title = "No space left on device"
+examples = [
+  'write /var/lib/app/cache/0001.tmp: no space left on device',
+]
+severity = "critical"
+priority = -5
+tags = ["system", "disk"]
+contains = ["no space left on device", "enospc"]
+level = "any"
+explain = """
+A write failed because the disk or volume is full. Databases stop accepting writes, builds and image pulls \
+fail, and programs can crash in odd ways."""
+fix = [
+  "Check free space: df -h, and docker system df for Docker.",
+  "Look for logs that grow without rotation (set Docker's json-file max-size), old builds and temporary files.",
+  "docker system prune frees unused images and containers; add --volumes only if no volume holds data you need.",
+]
+
+[[rule]]
+id = "sys.killed"
+title = "Process was killed"
+examples = [
+  'Out of memory: Killed process 4711 (java) total-vm:8123456kB, anon-rss:3990000kB',
+]
+severity = "critical"
+priority = -5
+tags = ["system", "memory"]
+contains = ["out of memory: killed process", "oom-killer", "killed process"]
+level = "any"
+explain = """
+The kernel's out-of-memory killer ended a process because the machine (or its cgroup) ran out of memory."""
+fix = [
+  "dmesg -T | grep -i -A5 'killed process' shows which process and how much memory it used.",
+  "Reduce the app's memory use or give the machine or container more.",
+]

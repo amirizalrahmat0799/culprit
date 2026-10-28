@@ -1,0 +1,175 @@
+# Python, Django, FastAPI/uvicorn, SQLAlchemy.
+
+[[rule]]
+id = "python.module-not-found"
+title = "Python module {module} isn't installed"
+examples = [
+  '''
+ModuleNotFoundError: No module named 'psycopg2'''',
+]
+severity = "critical"
+priority = 10
+tags = ["python", "startup", "dependencies"]
+contains = ["modulenotfounderror"]
+regex = "No module named '([^']+)'"
+captures = ["module"]
+explain = """
+Python couldn't import {module}. The package isn't installed in the environment that runs the app (a \
+different virtualenv or interpreter), or the import path is wrong for how the app is started."""
+fix = [
+  "Install it into the same environment: python -m pip install <package> (the package name can differ from {module}).",
+  "Check which Python runs the app: python -c 'import sys; print(sys.executable)'.",
+  "For your own packages, run from the project root, or use python -m package.module.",
+]
+
+[[rule]]
+id = "python.import-name"
+title = "Can't import {name} from {module}"
+examples = [
+  '''
+ImportError: cannot import name 'User' from partially initialized module 'app.models' (most likely due to a circular import) (/app/app/models.py)''',
+]
+severity = "critical"
+priority = 10
+tags = ["python", "startup"]
+contains = ["cannot import name"]
+regex = "cannot import name '([^']+)' from (?:partially initialized module )?'([^']+)'"
+captures = ["name", "module"]
+explain = """
+{module} was found but has no {name}. Either the installed version doesn't have it (renamed or removed), \
+or two modules import each other and one isn't finished loading yet ('partially initialized module')."""
+fix = [
+  "If the message says 'partially initialized module', break the circular import: move the import into the function, or move shared code to a third module.",
+  "Otherwise check the installed version: python -m pip show <package>.",
+]
+
+[[rule]]
+id = "python.none-attribute"
+title = "Used .{attribute} on None"
+examples = [
+  '''
+AttributeError: 'NoneType' object has no attribute 'email'''',
+]
+severity = "error"
+priority = 5
+tags = ["python"]
+contains = ["'nonetype' object has no attribute"]
+regex = "'NoneType' object has no attribute '([^']+)'"
+captures = ["attribute"]
+explain = """
+Code used .{attribute} on a value that was None. A lookup found nothing, a function returned nothing, or \
+an optional field was missing."""
+fix = [
+  "The last frame in your code shows where; check where that value comes from.",
+  "Check for None explicitly after lookups (dict.get, .first(), re.match).",
+]
+
+[[rule]]
+id = "python.key-error"
+title = "Missing key {key}"
+examples = [
+  '''
+KeyError: 'DATABASE_URL'''',
+]
+severity = "error"
+tags = ["python"]
+contains = ["keyerror"]
+regex = 'KeyError: (.+)$'
+captures = ["key"]
+explain = """
+Code read the key {key} from a dict that doesn't have it. Often a missing environment variable \
+(os.environ[...]), a missing field in JSON, or a renamed setting."""
+fix = [
+  "Use .get() with a default where the key is optional.",
+  "For settings and environment variables, check they're set where the app runs.",
+]
+
+[[rule]]
+id = "python.recursion"
+title = "Maximum recursion depth exceeded"
+examples = [
+  'RecursionError: maximum recursion depth exceeded while calling a Python object',
+]
+severity = "error"
+priority = 10
+tags = ["python"]
+contains = ["maximum recursion depth exceeded"]
+explain = """
+A function called itself (directly or through others) about 1000 times deep. Usually recursion without an \
+end, or a property or __getattr__ that calls itself."""
+fix = [
+  "Look at the repeating lines in the traceback to find the loop.",
+]
+
+[[rule]]
+id = "python.asgi-app"
+title = "uvicorn couldn't load the app"
+examples = [
+  'ERROR:    Error loading ASGI app. Could not import module "main".',
+]
+severity = "critical"
+priority = 10
+tags = ["python", "fastapi", "startup"]
+contains = ["error loading asgi app"]
+explain = """
+uvicorn couldn't import the application given as module:attribute. The module path, the attribute name, \
+or the working directory is wrong, or importing the module raised an error."""
+fix = [
+  "Check the argument, for example uvicorn app.main:app, matches the file and the variable name.",
+  "Run it from the project root, or pass --app-dir.",
+]
+
+[[rule]]
+id = "django.no-such-table"
+title = "Django table doesn't exist: migrations not applied"
+examples = [
+  'django.db.utils.OperationalError: no such table: shop_order',
+]
+severity = "error"
+priority = 12
+tags = ["python", "django", "database"]
+contains = ["django.db.utils"]
+regex = '(?:no such table|relation "[^"]+" does not exist|Table .* doesn.t exist)'
+explain = """
+The database doesn't have a table Django expects. Migrations haven't been run in this environment, or a \
+model change has no migration yet."""
+fix = [
+  "Run python manage.py migrate in this environment.",
+  "If models changed, create the migration first: python manage.py makemigrations.",
+]
+
+[[rule]]
+id = "sqlalchemy.operational"
+title = "SQLAlchemy couldn't talk to the database"
+examples = [
+  'sqlalchemy.exc.OperationalError: (psycopg2.OperationalError) connection to server at "db" (172.18.0.2), port 5432 failed: Connection refused',
+]
+severity = "error"
+symptom = true
+priority = 5
+tags = ["python", "sqlalchemy", "database"]
+contains = ["sqlalchemy.exc.operationalerror"]
+explain = """
+The database driver reported an operational problem: it couldn't connect, the connection dropped, or the \
+server refused the operation. The driver's message after OperationalError says which."""
+fix = [
+  "Read the text after (psycopg2.OperationalError) or similar; it's the database's own error.",
+  "For dropped idle connections, set pool_pre_ping=True or pool_recycle on the engine.",
+]
+
+[[rule]]
+id = "python.address-in-use"
+title = "Address already in use"
+examples = [
+  'OSError: [Errno 98] Address already in use',
+]
+severity = "critical"
+priority = 15
+tags = ["python", "startup", "network"]
+contains = ["[errno 98] address already in use", "[errno 48] address already in use", "[errno 10048]"]
+explain = """
+The server couldn't listen on its port because another process already does, often an earlier copy of \
+the app or another service on the same port."""
+fix = [
+  "Find it: lsof -i :<port> or ss -ltnp, and stop it, or start this one on another port.",
+]

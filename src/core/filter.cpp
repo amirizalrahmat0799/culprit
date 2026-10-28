@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cctype>
 
+#include "core/rules.hpp"
+
 namespace culprit {
 namespace {
 
@@ -96,6 +98,24 @@ Filter Filter::parse(std::string_view query) {
             f.terms_.push_back(std::move(t));
             continue;
         }
+        if (lower(tok) == "has:problem" || lower(tok).rfind("problem:", 0) == 0) {
+            t.kind = Kind::Problem;
+            if (lower(tok) != "has:problem") t.value = lower(tok.substr(8));
+            f.terms_.push_back(std::move(t));
+            continue;
+        }
+        if (lower(tok).rfind("group:", 0) == 0) {
+            std::string n = tok.substr(6);
+            if (n.empty()) continue;  // still typing
+            if (!std::all_of(n.begin(), n.end(), [](char c) { return c >= '0' && c <= '9'; }) || n.size() > 9) {
+                f.error_ = "group: needs a number";
+                continue;
+            }
+            t.kind = Kind::Group;
+            t.level = std::stoi(n);
+            f.terms_.push_back(std::move(t));
+            continue;
+        }
 
         // key<op>value
         size_t op_pos = tok.find_first_of("=!<>:");
@@ -147,6 +167,8 @@ Filter Filter::parse(std::string_view query) {
 bool Filter::match_term(const Term& t, const Entry& e) const {
     switch (t.kind) {
         case Kind::HasStack: return e.has_stack();
+        case Kind::Problem: return e.rule && e.rule->id.compare(0, t.value.size(), t.value) == 0;
+        case Kind::Group: return e.group == static_cast<uint32_t>(t.level);
         case Kind::LevelCmp: {
             if (e.level == Level::Unknown) return false;
             int l = static_cast<int>(e.level);

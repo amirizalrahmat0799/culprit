@@ -10,6 +10,7 @@ void LogModel::append(std::vector<Entry> batch) {
             if (first_source_.empty()) first_source_ = e.source;
             else if (e.source != first_source_) multiple_sources_ = true;
         }
+        analyzer_.add(e, static_cast<uint32_t>(entries_.size()));
         if (filter_.matches(e)) visible_.push_back(static_cast<uint32_t>(entries_.size()));
         entries_.push_back(std::move(e));
     }

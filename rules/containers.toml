@@ -1,0 +1,150 @@
+# Docker, Docker Compose and Kubernetes, as they appear in `docker compose up` output, `kubectl describe`
+# and `kubectl get events`, and container runtime logs.
+
+[[rule]]
+id = "container.oom-killed"
+title = "Container was killed for using too much memory"
+examples = [
+  'kedai-app-1 exited with code 137',
+  '    Reason:       OOMKilled',
+]
+severity = "critical"
+priority = 25
+tags = ["docker", "kubernetes", "memory"]
+contains = ["oomkilled", "exited with code 137", "exit code: 137", "exit code 137"]
+level = "any"
+explain = """
+The kernel killed the container's process because it went over its memory limit (exit code 137 is \
+128 + SIGKILL). Nothing is logged by the app itself; it just stops. Either the limit is too low, or the app \
+leaks or isn't told how much memory it may use (a JVM or Node heap sized for the whole machine)."""
+fix = [
+  "Compare the app's memory use with the limit: docker stats, or kubectl top pod.",
+  "Size runtime heaps from the limit: Java -XX:MaxRAMPercentage=75, Node --max-old-space-size.",
+  "Raise the limit (resources.limits.memory, or mem_limit in Compose) if the app really needs more.",
+  "Exit code 137 without OOMKilled means something else sent SIGKILL, e.g. a stop that timed out.",
+]
+
+[[rule]]
+id = "container.exited"
+title = "Container exited with code {code}"
+examples = [
+  'kedai-app-1 exited with code 1',
+]
+severity = "error"
+priority = 5
+tags = ["docker"]
+contains = ["exited with code"]
+regex = '(\S+) exited with code ([1-9]\d*)'
+captures = ["container", "code"]
+level = "any"
+explain = """
+The main process of {container} stopped with exit code {code}. The reason is in that container's last log \
+lines, just before this."""
+fix = [
+  "Look at the last lines from {container}: docker compose logs --tail=50 {container}",
+  "Exit code 1 is the app failing; 126/127 means the command couldn't run or wasn't found; 143 is a normal stop (SIGTERM).",
+]
+
+[[rule]]
+id = "kubernetes.crashloop"
+title = "Pod keeps crashing (CrashLoopBackOff)"
+examples = [
+  'api-7d9f8c6b5-x2x9q   0/1     CrashLoopBackOff   5 (32s ago)   4m10s',
+]
+severity = "critical"
+priority = 10
+tags = ["kubernetes"]
+contains = ["crashloopbackoff", "back-off restarting failed container"]
+level = "any"
+explain = """
+The container starts, exits, and Kubernetes keeps restarting it with growing delays. CrashLoopBackOff is \
+the result, not the cause: the cause is in the logs of the run that crashed."""
+fix = [
+  "Read the previous run's logs: kubectl logs <pod> --previous | culprit",
+  "kubectl describe pod <pod> shows the last exit code and reason (OOMKilled, Error, Completed).",
+  "Check that config and secrets the app needs exist, and that liveness probes aren't killing a slow start.",
+]
+
+[[rule]]
+id = "kubernetes.image-pull"
+title = "Image couldn't be pulled"
+examples = [
+  'Warning  Failed     12s   kubelet  Failed to pull image "registry.example.com/kedai/api:1.4.2": rpc error: code = NotFound desc = failed to pull and unpack image: manifest unknown',
+]
+severity = "critical"
+priority = 10
+tags = ["kubernetes", "docker", "deploy"]
+contains = ["errimagepull", "imagepullbackoff", "pull access denied", "manifest unknown", "failed to pull image"]
+level = "any"
+explain = """
+The node couldn't download the container image. The image name or tag is wrong (or the tag was never \
+pushed), or the registry needs credentials the cluster doesn't have."""
+fix = [
+  "Check the exact image and tag exist in the registry.",
+  "For private registries, check imagePullSecrets on the pod or its service account.",
+  "kubectl describe pod <pod> shows the registry's error message.",
+]
+
+[[rule]]
+id = "kubernetes.probe-failed"
+title = "{probe} probe failed"
+examples = [
+  'Warning  Unhealthy  3s (x4 over 33s)  kubelet  Readiness probe failed: Get "http://10.1.0.12:8080/actuator/health/readiness": dial tcp 10.1.0.12:8080: connect: connection refused',
+]
+severity = "warning"
+symptom = true
+priority = 10
+tags = ["kubernetes"]
+contains = ["probe failed"]
+regex = '(Liveness|Readiness|Startup) probe failed'
+captures = ["probe"]
+level = "any"
+explain = """
+Kubernetes checked the container and got no healthy answer. A failing liveness probe restarts the \
+container; a failing readiness probe takes it out of the service. If it happens during start-up, the app \
+starts slower than the probe allows."""
+fix = [
+  "Check the probe's path and port match the app (Spring Boot: /actuator/health/liveness and /readiness).",
+  "For slow starts, add a startupProbe or raise initialDelaySeconds / failureThreshold.",
+  "Probes shouldn't depend on the database or other services, or one outage restarts everything.",
+]
+
+[[rule]]
+id = "kubernetes.evicted"
+title = "Pod was evicted from its node"
+examples = [
+  'Warning  Evicted  2m  kubelet  The node was low on resource: memory. Threshold quantity: 100Mi, available: 85Mi.',
+]
+severity = "error"
+priority = 10
+tags = ["kubernetes"]
+contains = ["the node was low on resource"]
+level = "any"
+explain = """
+The node ran short of memory, disk or another resource and removed pods to recover. Pods without resource \
+requests, or using more than they request, are evicted first."""
+fix = [
+  "kubectl describe pod <pod> says which resource ran low.",
+  "Set requests close to real usage, and limits for memory.",
+  "For disk pressure, look at logs and emptyDir volumes filling the node's disk.",
+]
+
+[[rule]]
+id = "kubernetes.config-missing"
+title = "Pod references a ConfigMap or Secret that doesn't exist"
+examples = [
+  'Warning  Failed  5s  kubelet  Error: configmap "kedai-config" not found',
+]
+severity = "critical"
+priority = 10
+tags = ["kubernetes", "config"]
+contains = ["createcontainerconfigerror", "not found"]
+regex = '(?:CreateContainerConfigError|(?:configmap|secret) "[^"]+" not found)'
+level = "any"
+explain = """
+The container can't be created because a ConfigMap or Secret it uses (for environment variables or \
+volumes) doesn't exist in this namespace, or lacks the key it refers to."""
+fix = [
+  "kubectl describe pod <pod> names the missing object or key.",
+  "Check it exists in the same namespace: kubectl get configmap,secret -n <namespace>.",
+]

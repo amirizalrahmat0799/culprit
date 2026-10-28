@@ -9,7 +9,9 @@
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/terminal.hpp>
 
+#include "core/analyzer.hpp"
 #include "core/model.hpp"
+#include "core/rules.hpp"
 #include "core/stack.hpp"
 #include "tui/style.hpp"
 
@@ -29,6 +31,31 @@ Color level_color(Level level) {
         case Level::Unknown: break;
     }
     return Color::GrayDark;
+}
+
+Color severity_color(Severity s) {
+    switch (s) {
+        case Severity::Critical: return Color::RedLight;
+        case Severity::Error: return Color::Red;
+        case Severity::Warning: return Color::Yellow;
+        case Severity::Info: return Color::Cyan;
+    }
+    return Color::Red;
+}
+
+std::string upper(std::string_view s) {
+    std::string out(s);
+    for (char& c : out) {
+        if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+    }
+    return out;
+}
+
+std::string clip(const std::string& s, size_t n) {
+    if (s.size() <= n) return s;
+    size_t cut = n > 1 ? n - 1 : 0;
+    while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80) --cut;
+    return s.substr(0, cut) + "…";
 }
 
 Element level_badge(Level level) {
@@ -83,17 +110,24 @@ constexpr const char* kHelp[] = {
     "  Tab          scroll details    f         follow new lines on / off",
     "  Esc          close             G / End   jump to the end and follow",
     "",
+    "  Problems",
+    "  a            what culprit found: the likely root cause, known problems and",
+    "               repeated errors. Enter shows that problem's entries.",
+    "  p  P         next / previous entry with a problem    ◆ marks them",
+    "",
     "  Filter:  payment  \"order failed\"  -health  level>=warn  logger=OrderService",
-    "           orderId=8812  /time(d)? out/  has:stack",
+    "           orderId=8812  /time(d)? out/  has:stack  has:problem  problem:hikari",
     "",
     "  q  quit                         ?  close this help",
 };
 
 class Viewer {
 public:
-    Viewer(Reader& reader, const ViewerOptions& options) : reader_(reader), options_(options) {
+    Viewer(Reader& reader, const ViewerOptions& options)
+        : reader_(reader), options_(options), model_(options.rules) {
         model_.set_filter(options.initial_filter);
         filter_text_ = options.initial_filter;
+        message_ = options.message;
     }
 
     int run() {
@@ -168,6 +202,7 @@ private:
             return true;
         }
         if (editing_) return on_filter_key(e);
+        if (panel_) return on_panel_key(e);
         if (help_) {
             if (e == Event::Character('?') || e == Event::Escape || e == Event::Character('q')) help_ = false;
             return true;
@@ -244,11 +279,248 @@ private:
         if (e == Event::Character('w')) return jump(1, Level::Warn);
         if (e == Event::Character('W')) return jump(-1, Level::Warn);
         if (e == Event::Character('?')) return help_ = true, true;
+        if (e == Event::Character('a')) {
+            panel_ = true;
+            panel_selected_ = 0;
+            panel_scroll_ = 0;
+            return true;
+        }
+        auto jump_problem = [&](int dir) {
+            const auto& vis = model_.visible();
+            for (long long i = static_cast<long long>(cursor_) + dir; i >= 0 && i < static_cast<long long>(vis.size()); i += dir) {
+                if (model_.entry(vis[static_cast<size_t>(i)]).rule) return move_to(i), true;
+            }
+            message_ = dir > 0 ? "no more problems below" : "no more problems above";
+            return true;
+        };
+        if (e == Event::Character('p')) return jump_problem(1);
+        if (e == Event::Character('P')) return jump_problem(-1);
         if (e == Event::Character('q') || e == Event::CtrlC) {
             app_->Exit();
             return true;
         }
         return false;
+    }
+
+    // ---- problems panel ------------------------------------------------------------------------------
+
+    struct PanelItem {
+        bool problem;  // else a group
+        size_t index;  // into report_.problems / report_.groups
+    };
+
+    const Report& report() {
+        // recomputed only when entries arrived since
+        if (report_total_ != model_.total() || !report_ready_) {
+            report_ = model_.analyzer().report();
+            report_total_ = model_.total();
+            report_ready_ = true;
+            items_.clear();
+            for (size_t i = 0; i < report_.problems.size(); ++i) items_.push_back({true, i});
+            for (size_t i = 0; i < report_.groups.size(); ++i) items_.push_back({false, i});
+            // the root cause first
+            if (report_.root) {
+                bool problem = report_.root->kind == RootCause::Kind::Problem;
+                auto it = std::find_if(items_.begin(), items_.end(),
+                                       [&](const PanelItem& p) { return p.problem == problem && p.index == report_.root->index; });
+                if (it != items_.end()) std::rotate(items_.begin(), it, it + 1);
+            }
+        }
+        return report_;
+    }
+
+    bool is_root(const PanelItem& item) const {
+        return report_.root && (report_.root->kind == RootCause::Kind::Problem) == item.problem && report_.root->index == item.index;
+    }
+
+    bool on_panel_key(Event e) {
+        report();
+        const long long n = static_cast<long long>(items_.size());
+        auto select = [&](long long i) {
+            panel_selected_ = static_cast<size_t>(std::clamp<long long>(i, 0, std::max<long long>(0, n - 1)));
+            panel_detail_scroll_ = 0;
+            return true;
+        };
+        if (e == Event::Escape || e == Event::Character('a') || e == Event::Character('q')) return panel_ = false, true;
+        if (e == Event::ArrowDown || e == Event::Character('j')) return select(static_cast<long long>(panel_selected_) + 1);
+        if (e == Event::ArrowUp || e == Event::Character('k')) return select(static_cast<long long>(panel_selected_) - 1);
+        if (e == Event::PageDown) return select(static_cast<long long>(panel_selected_) + 8);
+        if (e == Event::PageUp) return select(static_cast<long long>(panel_selected_) - 8);
+        if (e == Event::Home || e == Event::Character('g')) return select(0);
+        if (e == Event::End || e == Event::Character('G')) return select(n - 1);
+        if (e == Event::Tab) return panel_detail_scroll_ += 3, true;
+        if (e == Event::TabReverse) return panel_detail_scroll_ = std::max(0, panel_detail_scroll_ - 3), true;
+        if (e == Event::Return && n > 0) {
+            const PanelItem& item = items_[panel_selected_];
+            std::string q = item.problem ? "problem:" + report_.problems[item.index].rule->id
+                                         : "group:" + std::to_string(report_.groups[item.index].id);
+            uint32_t first = item.problem ? report_.problems[item.index].first.index : report_.groups[item.index].first.index;
+            panel_ = false;
+            follow_ = false;
+            filter_text_ = q;
+            set_filter(q);
+            const auto& vis = model_.visible();
+            auto it = std::lower_bound(vis.begin(), vis.end(), first);
+            move_to(it == vis.end() ? 0 : static_cast<long long>(it - vis.begin()));
+            follow_ = false;
+            detail_ = true;
+            message_.clear();
+            return true;
+        }
+        if (e == Event::Character('?')) return help_ = true, panel_ = false, true;
+        return true;
+    }
+
+    Element panel_row(const PanelItem& item, bool selected, int width) {
+        Elements cells;
+        std::string count, when, source, title;
+        Element badge;
+        if (item.problem) {
+            const Problem& p = report_.problems[item.index];
+            std::string sev = upper(severity_name(p.rule->severity));
+            sev.resize(8, ' ');
+            badge = text(sev) | color(severity_color(p.rule->severity)) | bold;
+            title = p.title();
+            if (p.variants.size() > 1) title += " (+" + std::to_string(p.variants.size() - 1) + " more)";
+            count = "×" + thousands(p.count);
+            when = p.first.time;
+            source = p.first.source;
+        } else {
+            const ErrorGroup& g = report_.groups[item.index];
+            std::string lv(level_name(g.level));
+            lv.resize(8, ' ');
+            badge = text(lv) | color(level_color(g.level)) | dim;
+            title = g.title;
+            count = "×" + thousands(g.count);
+            when = g.first.time;
+            source = g.first.source;
+        }
+        cells.push_back(text(selected ? " ▶ " : "   ") | color(Color::Cyan));
+        cells.push_back(badge);
+        if (is_root(item)) cells.push_back(text(" ROOT CAUSE ") | bold | color(Color::Black) | bgcolor(Color::RedLight));
+        cells.push_back(text(" " + one_line(title)) | (selected ? bold : nothing) | flex);
+        cells.push_back(text(" " + count + " ") | bold | size(WIDTH, EQUAL, 9));
+        if (width > 90) {
+            cells.push_back(text(when.empty() ? "" : when) | dim | size(WIDTH, EQUAL, 13));
+            cells.push_back(text(" " + clip(source, 14)) | dim | size(WIDTH, EQUAL, 16));
+        }
+        auto line = hbox(std::move(cells));
+        if (selected) line = line | bgcolor(Color::RGB(40, 52, 66));
+        return line;
+    }
+
+    std::string where_text(const Occurrence& o) {
+        std::string s;
+        if (!o.source.empty()) s += o.source + "  ";
+        if (!o.time.empty()) s += o.time + "  ";
+        if (o.line) s += "line " + std::to_string(o.line);
+        return s;
+    }
+
+    Element panel_detail(const PanelItem& item) {
+        Elements out;
+        auto heading = [](const std::string& t) { return text(t) | bold | color(Color::Cyan); };
+        std::optional<Frame> own;
+        if (item.problem) {
+            const Problem& p = report_.problems[item.index];
+            out.push_back(hbox({text(p.title()) | bold | color(severity_color(p.rule->severity)),
+                                text("  " + p.rule->id) | dim}));
+            out.push_back(text("first: " + where_text(p.first) + "   last: " + where_text(p.last)) | dim);
+            if (!p.message.empty()) out.push_back(paragraph(p.message) | dim);
+            out.push_back(text(""));
+            out.push_back(paragraph(p.explain()));
+            auto fixes = p.fix();
+            if (!fixes.empty()) {
+                out.push_back(text(""));
+                out.push_back(heading("What to do"));
+                for (size_t i = 0; i < fixes.size(); ++i) {
+                    out.push_back(hbox({text(" " + std::to_string(i + 1) + ". "), paragraph(fixes[i]) | flex}));
+                }
+            }
+            if (p.variants.size() > 1) {
+                out.push_back(text(""));
+                out.push_back(heading("Seen as"));
+                for (const auto& v : p.variants) out.push_back(text(" " + v));
+            }
+            own = p.where;
+        } else {
+            const ErrorGroup& g = report_.groups[item.index];
+            out.push_back(paragraph(g.title) | bold | color(level_color(g.level)));
+            out.push_back(text("first: " + where_text(g.first) + "   last: " + where_text(g.last)) | dim);
+            if (!g.exception.empty() && g.exception != g.title) {
+                out.push_back(hbox({text("root exception: ") | color(Color::Yellow), paragraph(g.exception) | flex}));
+            }
+            out.push_back(text(""));
+            out.push_back(paragraph("No rule recognises this. The same error (apart from numbers and ids) was seen " +
+                                    thousands(g.count) + (g.count == 1 ? " time." : " times.") +
+                                    " Press Enter to see it in the log with its stack trace.") | dim);
+            own = g.where;
+        }
+        if (own) {
+            out.push_back(text(""));
+            out.push_back(hbox({text("▶ in your code: ") | color(Color::Green) | bold,
+                                text(own->file + (own->line ? ":" + std::to_string(own->line) : "")) | bold,
+                                text(own->function.empty() ? "" : "  " + own->function) | dim}));
+        }
+        if (is_root(item) && report_.root->followers > 0) {
+            const RootCause& root = *report_.root;
+            out.push_back(text(""));
+            std::string f = "Then " + thousands(root.followers) + (root.followers == 1 ? " error" : " errors") + " followed " +
+                            root.window + ", most likely because of this: ";
+            for (size_t i = 0; i < root.follower_top.size(); ++i) {
+                f += (i ? ", " : "") + root.follower_top[i].first + " ×" + thousands(root.follower_top[i].second);
+            }
+            out.push_back(paragraph(f) | color(Color::Yellow));
+        }
+        if (is_root(item)) {
+            out.push_back(text(""));
+            out.push_back(paragraph("Why this one: " + report_.root->why + ".") | dim);
+        }
+        int max_scroll = std::max(0, static_cast<int>(out.size()) - 3);
+        panel_detail_scroll_ = std::min(panel_detail_scroll_, max_scroll);
+        Elements visible(out.begin() + panel_detail_scroll_, out.end());
+        return vbox(std::move(visible));
+    }
+
+    Element panel(int height) {
+        report();
+        Elements out;
+        const Report& r = report_;
+        if (items_.empty()) {
+            std::string why = model_.total() == 0 ? "Nothing read yet." : "No problems found: no rule matched, and there are no errors or warnings.";
+            if (!options_.rules) why = "No rules are loaded.";
+            return vbox({filler(), text(why) | dim | center, filler()});
+        }
+        // a summary line
+        size_t problems = r.problems.size(), groups = r.groups.size();
+        std::string summary = " " + thousands(problems) + (problems == 1 ? " known problem" : " known problems") + ", " +
+                              thousands(groups) + (groups == 1 ? " other error or warning" : " other errors and warnings");
+        if (r.root) {
+            const char* conf = r.root->confidence == RootCause::Confidence::High     ? "high"
+                               : r.root->confidence == RootCause::Confidence::Medium ? "medium"
+                                                                                     : "low";
+            summary += " · root cause confidence: " + std::string(conf);
+        }
+        out.push_back(text(summary) | dim);
+
+        // the list gets up to half the height; the selected item's explanation the rest
+        int list_h = std::clamp(static_cast<int>(items_.size()), 3, std::max(3, height / 2 - 1));
+        if (panel_selected_ >= items_.size()) panel_selected_ = items_.size() - 1;
+        if (panel_selected_ < panel_scroll_) panel_scroll_ = panel_selected_;
+        if (panel_selected_ >= panel_scroll_ + static_cast<size_t>(list_h)) panel_scroll_ = panel_selected_ - list_h + 1;
+        Elements rows;
+        for (size_t i = panel_scroll_; i < items_.size() && i < panel_scroll_ + static_cast<size_t>(list_h); ++i) {
+            // a divider before the first unrecognised group
+            if (i > 0 && !items_[i].problem && items_[i - 1].problem && !is_root(items_[i - 1])) {
+                rows.push_back(text("   errors and warnings no rule knows") | dim | italic);
+            }
+            rows.push_back(panel_row(items_[i], i == panel_selected_, width_));
+        }
+        rows.push_back(filler());
+        out.push_back(vbox(std::move(rows)) | size(HEIGHT, EQUAL, list_h + 1));
+        out.push_back(separatorLight());
+        out.push_back(panel_detail(items_[panel_selected_]) | flex);
+        return vbox(std::move(out));
     }
 
     bool on_filter_key(Event e) {
@@ -316,6 +588,12 @@ private:
 
         Elements screen;
         screen.push_back(header());
+        if (panel_) {
+            screen.push_back(panel(height - 3) | size(HEIGHT, EQUAL, height - 3));
+            screen.push_back(text(""));
+            screen.push_back(panel_footer());
+            return vbox(std::move(screen));
+        }
         screen.push_back(list() | size(HEIGHT, EQUAL, list_height_));
         if (detail_) {
             screen.push_back(separatorLight());
@@ -335,6 +613,7 @@ private:
     Element header() {
         Elements parts{text(" culprit ") | bold | color(Color::Black) | bgcolor(Color::RedLight),
                        text(" " + options_.title + " ") | bold};
+        if (panel_) parts.push_back(text(" PROBLEMS ") | bold | color(Color::Black) | bgcolor(Color::MagentaLight));
         parts.push_back(filler());
         parts.push_back(text(thousands(model_.total()) + " entries  ") | color(Color::White));
         size_t errors = model_.count(Level::Error) + model_.count(Level::Fatal);
@@ -342,6 +621,11 @@ private:
         parts.push_back(text("● " + thousands(errors) + " errors  ") | color(errors ? Color::RedLight : Color::GrayLight));
         parts.push_back(text("● " + thousands(warnings) + " warnings  ") |
                         color(warnings ? Color::YellowLight : Color::GrayLight));
+        if (options_.rules) {
+            size_t problems = model_.analyzer().problem_count();
+            parts.push_back(text("◆ " + thousands(problems) + (problems == 1 ? " problem  " : " problems  ")) |
+                            color(problems ? Color::MagentaLight : Color::GrayLight) | (problems ? bold : nothing));
+        }
         bool live = !reader_.finished();
         if (follow_ && live) parts.push_back(text(" FOLLOWING ") | color(Color::Black) | bgcolor(Color::Green));
         else if (live) parts.push_back(text(" PAUSED ") | color(Color::Black) | bgcolor(Color::Yellow));
@@ -370,6 +654,8 @@ private:
         } else {
             cells.push_back(text(" "));
         }
+        if (e.rule) cells.push_back(text("◆ ") | color(severity_color(e.rule->severity)) | bold);
+        else cells.push_back(text("  "));
         cells.push_back(highlighted(one_line(e.message), words) | flex);
         if (e.has_stack()) {
             cells.push_back(text(" +" + std::to_string(line_count(e.stack)) + " lines ") | color(Color::Red) | dim);
@@ -414,6 +700,29 @@ private:
             out.push_back(paragraph(e.message.substr(start, nl == std::string::npos ? std::string::npos : nl - start)) | bold);
             if (nl == std::string::npos) break;
             start = nl + 1;
+        }
+
+        // what culprit knows about it
+        if (e.rule && options_.rules) {
+            if (auto m = options_.rules->match(e); m && m->rule == e.rule) {
+                const Rule& r = *m->rule;
+                out.push_back(text(""));
+                out.push_back(hbox({text("◆ ") | color(severity_color(r.severity)) | bold,
+                                    text(culprit::render(r.title, m->captures)) | bold | color(severity_color(r.severity)),
+                                    text("  " + r.id) | dim}));
+                out.push_back(hbox({text("  "), paragraph(culprit::render(r.explain, m->captures)) | flex}));
+                for (size_t i = 0; i < r.fix.size(); ++i) {
+                    out.push_back(hbox({text("  " + std::to_string(i + 1) + ". ") | color(Color::Cyan),
+                                        paragraph(culprit::render(r.fix[i], m->captures)) | flex}));
+                }
+                out.push_back(text(""));
+            }
+        } else if (e.group != UINT32_MAX) {
+            if (const ErrorGroup* g = model_.analyzer().group(e.group); g && g->count > 1) {
+                out.push_back(text("  seen " + thousands(g->count) + " times, first at " +
+                                   (g->first.time.empty() ? "line " + std::to_string(g->first.line) : g->first.time) +
+                                   "  (filter: group:" + std::to_string(g->id) + ")") | dim);
+            }
         }
 
         for (const auto& [k, v] : e.fields) {
@@ -473,8 +782,16 @@ private:
         auto key = [](const char* k, const char* what) {
             return hbox({text(k) | bold | color(Color::Cyan), text(" " + std::string(what) + "  ") | dim});
         };
-        return hbox({text(" "), key("/", "filter"), key("Enter", "details"), key("n/N", "errors"),
+        return hbox({text(" "), key("/", "filter"), key("Enter", "details"), key("a", "problems"), key("n/N", "errors"),
                      key("e", "warn+err"), key("f", "follow"), key("?", "help"), key("q", "quit"), filler()});
+    }
+
+    Element panel_footer() {
+        auto key = [](const char* k, const char* what) {
+            return hbox({text(k) | bold | color(Color::Cyan), text(" " + std::string(what) + "  ") | dim});
+        };
+        return hbox({text(" "), key("↑↓", "choose"), key("Enter", "show its entries"), key("Tab", "scroll text"),
+                     key("Esc", "back to the log"), filler()});
     }
 
     Reader& reader_;
@@ -498,6 +815,15 @@ private:
     int detail_height_ = 0;
     int width_ = 80;
     bool logger_column_ = true;
+
+    bool panel_ = false;
+    size_t panel_selected_ = 0;
+    size_t panel_scroll_ = 0;
+    int panel_detail_scroll_ = 0;
+    Report report_;
+    size_t report_total_ = 0;
+    bool report_ready_ = false;
+    std::vector<PanelItem> items_;
 };
 
 }  // namespace

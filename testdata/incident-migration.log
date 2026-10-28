@@ -1,0 +1,40 @@
+db-1     | 2026-10-28 01:40:58.101 UTC [1] LOG:  database system is ready to accept connections
+nginx-1  | 2026/10/28 01:40:59 [notice] 1#1: start worker processes
+app-1    | 2026-10-28T09:41:02.118+08:00  INFO 1 --- [kedai] [           main] c.e.kedai.KedaiApplication               : Starting KedaiApplication v0.5.0 using Java 21.0.5 with PID 1
+app-1    | 2026-10-28T09:41:02.121+08:00  INFO 1 --- [kedai] [           main] c.e.kedai.KedaiApplication               : The following 1 profile is active: "prod"
+app-1    | 2026-10-28T09:41:03.977+08:00  INFO 1 --- [kedai] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Starting...
+app-1    | 2026-10-28T09:41:04.102+08:00  INFO 1 --- [kedai] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Start completed.
+app-1    | 2026-10-28T09:41:04.210+08:00  INFO 1 --- [kedai] [           main] o.f.core.internal.command.DbMigrate      : Migrating schema "public" to version "7 - add refunds"
+db-1     | 2026-10-28 01:41:04.231 UTC [42] ERROR:  column "currency" of relation "orders" already exists
+db-1     | 2026-10-28 01:41:04.231 UTC [42] STATEMENT:  ALTER TABLE orders ADD COLUMN currency char(3) NOT NULL DEFAULT 'MYR'
+app-1    | 2026-10-28T09:41:04.240+08:00 ERROR 1 --- [kedai] [           main] o.f.core.internal.command.DbMigrate      : Migration of schema "public" to version "7 - add refunds" failed! Changes successfully rolled back.
+app-1    | 2026-10-28T09:41:04.262+08:00  WARN 1 --- [kedai] [           main] ConfigServletWebServerApplicationContext : Exception encountered during context initialization - cancelling refresh attempt: org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'flywayInitializer' defined in class path resource [org/springframework/boot/autoconfigure/flyway/FlywayAutoConfiguration$FlywayConfiguration.class]: Migration V7__add_refunds.sql failed
+app-1    | 2026-10-28T09:41:04.301+08:00 ERROR 1 --- [kedai] [           main] o.s.boot.SpringApplication               : Application run failed
+app-1    | 
+app-1    | org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'flywayInitializer' defined in class path resource [org/springframework/boot/autoconfigure/flyway/FlywayAutoConfiguration$FlywayConfiguration.class]: Migration V7__add_refunds.sql failed
+app-1    | -------------------------------------
+app-1    | SQL State  : 42701
+app-1    | Error Code : 0
+app-1    | Message    : ERROR: column "currency" of relation "orders" already exists
+app-1    | Location   : db/migration/V7__add_refunds.sql (/app/BOOT-INF/classes/db/migration/V7__add_refunds.sql)
+app-1    | Line       : 1
+app-1    | Statement  : ALTER TABLE orders ADD COLUMN currency char(3) NOT NULL DEFAULT 'MYR'
+app-1    | 
+app-1    | 	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.initializeBean(AbstractAutowireCapableBeanFactory.java:1806)
+app-1    | 	at org.springframework.boot.SpringApplication.run(SpringApplication.java:335)
+app-1    | 	at com.example.kedai.KedaiApplication.main(KedaiApplication.java:12)
+app-1    | Caused by: org.flywaydb.core.internal.command.DbMigrate$FlywayMigrateException: Migration V7__add_refunds.sql failed
+app-1    | 	at org.flywaydb.core.internal.command.DbMigrate.doMigrateGroup(DbMigrate.java:382)
+app-1    | 	... 18 common frames omitted
+app-1    | Caused by: org.postgresql.util.PSQLException: ERROR: column "currency" of relation "orders" already exists
+app-1    | 	at org.postgresql.core.v3.QueryExecutorImpl.receiveErrorResponse(QueryExecutorImpl.java:2733)
+app-1    | 	... 24 common frames omitted
+app-1 exited with code 1
+nginx-1  | 2026/10/28 01:41:12 [error] 29#29: *1 connect() failed (111: Connection refused) while connecting to upstream, client: 172.18.0.1, server: _, request: "GET /api/orders HTTP/1.1", upstream: "http://172.18.0.3:8080/api/orders", host: "localhost"
+nginx-1  | 172.18.0.1 - - [28/Oct/2026:01:41:12 +0000] "GET /api/orders HTTP/1.1" 502 157 "-" "Mozilla/5.0"
+nginx-1  | 2026/10/28 01:41:15 [error] 29#29: *3 connect() failed (111: Connection refused) while connecting to upstream, client: 172.18.0.1, server: _, request: "GET /api/products HTTP/1.1", upstream: "http://172.18.0.3:8080/api/products", host: "localhost"
+nginx-1  | 172.18.0.1 - - [28/Oct/2026:01:41:15 +0000] "GET /api/products HTTP/1.1" 502 157 "-" "Mozilla/5.0"
+nginx-1  | 2026/10/28 01:41:21 [error] 29#29: *5 connect() failed (111: Connection refused) while connecting to upstream, client: 172.18.0.1, server: _, request: "POST /api/orders HTTP/1.1", upstream: "http://172.18.0.3:8080/api/orders", host: "localhost"
+nginx-1  | 172.18.0.1 - - [28/Oct/2026:01:41:21 +0000] "POST /api/orders HTTP/1.1" 502 157 "-" "Mozilla/5.0"
+nginx-1  | 2026/10/28 01:41:30 [error] 29#29: *7 connect() failed (111: Connection refused) while connecting to upstream, client: 172.18.0.1, server: _, request: "GET /api/orders HTTP/1.1", upstream: "http://172.18.0.3:8080/api/orders", host: "localhost"
+nginx-1  | 172.18.0.1 - - [28/Oct/2026:01:41:30 +0000] "GET /api/orders HTTP/1.1" 502 157 "-" "Mozilla/5.0"

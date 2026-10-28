@@ -1,0 +1,222 @@
+# Node.js.
+
+[[rule]]
+id = "node.address-in-use"
+title = "Port {port} is already in use"
+examples = [
+  'Error: listen EADDRINUSE: address already in use :::3000',
+]
+severity = "critical"
+priority = 20
+tags = ["node", "startup", "network"]
+contains = ["eaddrinuse"]
+regex = 'EADDRINUSE(?:: address already in use)? (?:\S*:)?(\d+)'
+captures = ["port"]
+explain = """
+The server couldn't listen on port {port} because another process already does. Often an earlier copy of \
+the app (a dev server or watcher that didn't exit), or another service on the same port."""
+fix = [
+  "Find it: lsof -i :{port} (Linux, macOS) or netstat -ano | findstr :{port} (Windows), and stop it.",
+  "Or use another port: PORT=3001.",
+]
+
+[[rule]]
+id = "node.connection-refused"
+title = "Connection refused by {address}"
+examples = [
+  'Error: connect ECONNREFUSED 127.0.0.1:5432',
+]
+severity = "error"
+symptom = true
+priority = 10
+tags = ["node", "network"]
+contains = ["econnrefused"]
+regex = 'ECONNREFUSED (\S+)'
+captures = ["address"]
+explain = """
+Nothing accepted the connection at {address}. The service there (a database, cache or API) isn't \
+running, isn't ready yet, or the address is wrong. In a container, 127.0.0.1 is the container itself."""
+fix = [
+  "Check that the service at {address} is up and listening.",
+  "In Docker Compose, connect to the service name (db:5432), not localhost, and wait for it to be healthy.",
+]
+
+[[rule]]
+id = "node.dns"
+title = "Host name {host} couldn't be resolved"
+examples = [
+  'Error: getaddrinfo ENOTFOUND payments-api',
+]
+severity = "error"
+priority = 10
+tags = ["node", "network", "dns"]
+contains = ["enotfound", "eai_again"]
+regex = '(?:ENOTFOUND|EAI_AGAIN) (\S+)'
+captures = ["host"]
+explain = """
+DNS has no address for {host}. The name is misspelled, it only exists inside another network (a Compose \
+or Kubernetes service name used from outside), or DNS itself is unreachable (EAI_AGAIN)."""
+fix = [
+  "Check the spelling and where the name comes from (an environment variable is often missing or stale).",
+  "Compose service names only resolve inside the same Compose network.",
+]
+
+[[rule]]
+id = "node.connection-reset"
+title = "Connection was closed by the other side"
+examples = [
+  'Error: socket hang up',
+]
+severity = "warning"
+symptom = true
+priority = 5
+tags = ["node", "network"]
+contains = ["econnreset", "socket hang up"]
+explain = """
+The other side closed the connection in the middle of a request. The remote service crashed or restarted, \
+a proxy or load balancer timed out, or a keep-alive connection was reused after the server closed it."""
+fix = [
+  "Look at the other service's logs at the same time.",
+  "If it happens on idle keep-alive connections, make the client's keep-alive timeout shorter than the server's.",
+]
+
+[[rule]]
+id = "node.timeout"
+title = "Network request timed out"
+examples = [
+  'Error: connect ETIMEDOUT 10.0.3.17:443',
+]
+severity = "warning"
+symptom = true
+priority = 5
+tags = ["node", "network"]
+contains = ["etimedout", "esockettimedout", "und_err_connect_timeout", "und_err_headers_timeout"]
+explain = """
+A connection or response took longer than the time limit. The other service is slow or overloaded, or \
+traffic to it is dropped by a firewall."""
+fix = [
+  "Check the other service's response times and logs.",
+  "If it's a firewall or wrong address, connections time out instead of being refused.",
+]
+
+[[rule]]
+id = "node.unhandled-rejection"
+title = "Unhandled promise rejection"
+examples = [
+  '''
+[UnhandledPromiseRejection: This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason "fetch failed".] {
+  code: 'ERR_UNHANDLED_REJECTION'
+}''',
+]
+severity = "error"
+priority = 5
+tags = ["node"]
+contains = ["unhandledpromiserejection", "unhandled promise rejection", "unhandledrejection"]
+explain = """
+A promise failed and nothing caught it, usually an async function called without await or .catch(). \
+Since Node 15 this ends the process."""
+fix = [
+  "The stack trace shows where the promise was created; add await inside try/catch, or .catch().",
+  "In Express 4, errors in async handlers aren't caught for you; wrap them or move to Express 5.",
+]
+
+[[rule]]
+id = "node.module-not-found"
+title = "Module {module} can't be found"
+examples = [
+  '''
+Error: Cannot find module 'express'''',
+]
+severity = "critical"
+priority = 10
+tags = ["node", "build", "startup"]
+contains = ["cannot find module", "cannot find package", "err_module_not_found"]
+regex = '''Cannot find (?:module|package) '([^']+)'''
+captures = ["module"]
+explain = """
+Node couldn't load {module}. The dependency isn't installed (or is only in devDependencies and the image \
+installs production ones), or a relative import path or file extension is wrong."""
+fix = [
+  "For a package: check it's in dependencies, and run npm ci in the same environment that runs the app.",
+  "For a relative path: check the path and its case; Linux file names are case-sensitive.",
+  "In ES modules, relative imports need the file extension (./db.js).",
+]
+
+[[rule]]
+id = "node.heap-oom"
+title = "Node ran out of memory"
+examples = [
+  'FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory',
+]
+severity = "critical"
+priority = 20
+tags = ["node", "memory"]
+contains = ["javascript heap out of memory", "reached heap limit"]
+level = "any"
+explain = """
+The V8 heap reached its limit and the process crashed. Something holds on to too much (a cache or array \
+that keeps growing, a large file or response read whole), or the limit is too small for the job."""
+fix = [
+  "Take heap snapshots (node --inspect, or --heapsnapshot-near-heap-limit=2) and compare what grows.",
+  "Stream large files and responses instead of reading them whole.",
+  "Raise the limit only if the work needs it: --max-old-space-size=4096.",
+]
+
+[[rule]]
+id = "node.undefined-property"
+title = "Read '{property}' of {value}"
+examples = [
+  '''
+TypeError: Cannot read properties of undefined (reading 'id')
+    at createOrder (/app/src/orders.js:42:31)''',
+]
+severity = "error"
+priority = 5
+tags = ["node", "javascript"]
+contains = ["cannot read properties of"]
+regex = '''Cannot read properties of (undefined|null) \(reading '([^']+)'\)'''
+captures = ["value", "property"]
+explain = """
+Code read .{property} on a value that was {value}. Usually data that wasn't loaded, an API field that's \
+missing, or a lookup that found nothing."""
+fix = [
+  "The first frame in your code shows where; check where that object comes from.",
+  "Guard optional data (obj?.{property}) or validate inputs where they enter.",
+]
+
+[[rule]]
+id = "node.not-a-function"
+title = "Called something that isn't a function"
+examples = [
+  'TypeError: db.collection is not a function',
+]
+severity = "error"
+priority = 5
+tags = ["node", "javascript"]
+contains = ["is not a function"]
+explain = """
+Code called a value that isn't a function. Often a wrong import (default vs named export, CommonJS vs \
+ES module), a typo in the name, or a library version with a different API."""
+fix = [
+  "Check how the module exports it, and import it the same way.",
+  "Log the value before the call; it's often undefined.",
+]
+
+[[rule]]
+id = "node.too-many-open-files"
+title = "Too many open files"
+examples = [
+  '''
+Error: EMFILE: too many open files, open '/app/uploads/a.png'''',
+]
+severity = "error"
+priority = 10
+tags = ["node", "system"]
+contains = ["emfile"]
+explain = """
+The process hit its limit of open files and sockets. Something opens files or connections faster than it \
+closes them, or the limit (ulimit -n) is low."""
+fix = [
+  "Look for streams or sockets that are never closed.",
+  "Check the limit with ulimit -n and raise it if the load really needs it.",
+]

@@ -1,0 +1,267 @@
+# Oracle Database errors, as Oracle's JDBC driver and tools print them (ORA-nnnnn).
+
+[[rule]]
+id = "oracle.unique-constraint"
+title = "ORA-00001: duplicate value for unique constraint {constraint}"
+examples = [
+  'java.sql.SQLIntegrityConstraintViolationException: ORA-00001: unique constraint (SHOP.ORDERS_REF_UK) violated',
+]
+severity = "error"
+priority = 12
+tags = ["oracle", "database"]
+contains = ["ora-00001"]
+regex = 'ORA-00001: unique constraint \(([^)]+)\) violated'
+captures = ["constraint"]
+explain = """
+An insert or update would have created a second row with the same value in a column (or columns) covered \
+by the unique constraint or primary key {constraint}."""
+fix = [
+  "Find the constraint's columns: SELECT column_name FROM all_cons_columns WHERE constraint_name = '<name>';",
+  "If the key comes from a sequence, check the sequence hasn't fallen behind the data (after an import, for example).",
+  "If duplicates can legitimately arrive (retries, double submits), use MERGE or catch the error and answer 409.",
+]
+
+[[rule]]
+id = "oracle.table-missing"
+title = "ORA-00942: table or view does not exist"
+examples = [
+  'java.sql.SQLSyntaxErrorException: ORA-00942: table or view does not exist',
+]
+severity = "error"
+priority = 12
+tags = ["oracle", "database"]
+contains = ["ora-00942"]
+explain = """
+The statement uses a table or view this database user can't see. It may not exist, it may be in another \
+schema, or the user may lack the SELECT/INSERT grant on it (Oracle reports missing privileges the same way)."""
+fix = [
+  "Check who you're connected as and which schema the table is in: SELECT owner FROM all_tables WHERE table_name = '<NAME>';",
+  "Qualify the name (SCHEMA.TABLE), or create a synonym, or set hibernate.default_schema.",
+  "Check grants for this user, and that the migration creating the table ran in this database.",
+]
+
+[[rule]]
+id = "oracle.invalid-login"
+title = "ORA-01017: invalid username or password"
+examples = [
+  'java.sql.SQLException: ORA-01017: invalid username/password; logon denied',
+]
+severity = "critical"
+priority = 12
+tags = ["oracle", "database", "auth"]
+contains = ["ora-01017"]
+explain = """
+Oracle refused the login. The username or password is wrong, or the account is set up differently in this \
+environment (passwords are case-sensitive since Oracle 11g)."""
+fix = [
+  "Check the username and password the app actually uses (environment variables override application.properties).",
+  "Check whether the account is locked or expired: SELECT account_status FROM dba_users WHERE username = '<USER>';",
+]
+
+[[rule]]
+id = "oracle.account-locked"
+title = "ORA-28000: the database account is locked"
+examples = [
+  'java.sql.SQLException: ORA-28000: The account is locked.',
+]
+severity = "critical"
+priority = 12
+tags = ["oracle", "database", "auth"]
+contains = ["ora-28000"]
+explain = """
+The account was locked, usually after too many failed logins (often an old password still configured \
+somewhere) or by a DBA."""
+fix = [
+  "Find what still uses the old password before unlocking, or it will lock again.",
+  "A DBA can unlock it: ALTER USER <user> ACCOUNT UNLOCK;",
+]
+
+[[rule]]
+id = "oracle.no-listener"
+title = "ORA-12541: nothing is listening at the database address"
+examples = [
+  'java.sql.SQLException: ORA-12541: Cannot connect. No listener at host db01 port 1521.',
+]
+severity = "critical"
+priority = 12
+tags = ["oracle", "database", "network"]
+contains = ["ora-12541"]
+explain = """
+The connection reached the host, but no Oracle listener is running on that port. The database (or its \
+listener) is down, or the host or port in the URL is wrong."""
+fix = [
+  "Check the host and port in the JDBC URL (the default port is 1521).",
+  "On the database server: lsnrctl status.",
+]
+
+[[rule]]
+id = "oracle.unknown-service"
+title = "ORA-12514: the listener doesn't know this service name"
+examples = [
+  'java.sql.SQLException: ORA-12514: Cannot connect to database. Service ORCLPDB is not registered with the listener at host db01 port 1521.',
+]
+severity = "critical"
+priority = 12
+tags = ["oracle", "database", "network"]
+contains = ["ora-12514"]
+explain = """
+The listener is up, but no database has registered the service name in the connection URL. The name is \
+misspelled, it's a SID used as a service name (or the other way round), or the database is still starting."""
+fix = [
+  "List the services the listener knows: lsnrctl services.",
+  "Service names use a slash, SIDs a colon: jdbc:oracle:thin:@//host:1521/SERVICE vs jdbc:oracle:thin:@host:1521:SID",
+]
+
+[[rule]]
+id = "oracle.connect-timeout"
+title = "ORA-12170: connection to the database timed out"
+examples = [
+  'java.sql.SQLRecoverableException: ORA-12170: Cannot connect. TCP connect timeout of 10000ms for host db01 port 1521.',
+]
+severity = "error"
+symptom = true
+priority = 12
+tags = ["oracle", "database", "network"]
+contains = ["ora-12170", "ora-12535"]
+explain = """
+No answer from the database host within the time limit. Usually a firewall or security group drops the \
+traffic, or the host is unreachable from where the app runs."""
+fix = [
+  "Test from the app's host or container: nc -vz <host> 1521",
+  "Check firewalls, security groups and VPN routes between the app and the database.",
+]
+
+[[rule]]
+id = "oracle.mutating-table"
+title = "ORA-04091: trigger reads the table it is changing"
+examples = [
+  'java.sql.SQLException: ORA-04091: table SHOP.ORDERS is mutating, trigger/function may not see it',
+]
+severity = "error"
+priority = 12
+tags = ["oracle", "database", "trigger"]
+contains = ["ora-04091"]
+regex = 'ORA-04091: table (\S+) is mutating'
+captures = ["table"]
+explain = """
+A row-level trigger on {table} queried or changed {table} itself while the statement was still changing \
+it. Oracle forbids that because the result would depend on the order the rows are processed."""
+fix = [
+  "Move the logic to a compound trigger: collect the rows in the row section, act in AFTER STATEMENT.",
+  "Or do the work in the application or a procedure instead of the trigger.",
+  "Avoid PRAGMA AUTONOMOUS_TRANSACTION as a fix; it reads data the statement hasn't committed.",
+]
+
+[[rule]]
+id = "oracle.deadlock"
+title = "ORA-00060: deadlock detected"
+examples = [
+  'java.sql.SQLException: ORA-00060: deadlock detected while waiting for resource',
+]
+severity = "error"
+priority = 12
+tags = ["oracle", "database", "locking"]
+contains = ["ora-00060"]
+explain = """
+Two sessions each held a row lock the other needed, so Oracle rolled back one statement. It happens when \
+transactions update the same rows in a different order, or with unindexed foreign keys."""
+fix = [
+  "Oracle writes a trace file with both statements; ask the DBA for it (it's named in the alert log).",
+  "Update rows in a consistent order (for example by primary key) in every transaction.",
+  "Index foreign key columns, so deletes and updates on the parent don't lock the whole child table.",
+]
+
+[[rule]]
+id = "oracle.not-null"
+title = "ORA-01400: a required column got no value: {column}"
+examples = [
+  'java.sql.SQLIntegrityConstraintViolationException: ORA-01400: cannot insert NULL into ("SHOP"."ORDERS"."CUSTOMER_ID")',
+]
+severity = "error"
+priority = 12
+tags = ["oracle", "database"]
+contains = ["ora-01400"]
+regex = 'ORA-01400: cannot insert NULL into \(([^)]+)\)'
+captures = ["column"]
+explain = """
+The insert left {column} empty, and the column is NOT NULL."""
+fix = [
+  "Set the field before saving, or give the column a default.",
+  "With JPA, check the entity maps this column and that the value isn't lost in a DTO mapping.",
+]
+
+[[rule]]
+id = "oracle.value-too-large"
+title = "ORA-12899: value too long for {column}"
+examples = [
+  'java.sql.SQLException: ORA-12899: value too large for column "SHOP"."CUSTOMERS"."NAME" (actual: 61, maximum: 50)',
+]
+severity = "error"
+priority = 12
+tags = ["oracle", "database"]
+contains = ["ora-12899"]
+regex = 'ORA-12899: value too large for column (\S+) \(actual: (\d+), maximum: (\d+)\)'
+captures = ["column", "actual", "maximum"]
+explain = """
+A value of length {actual} didn't fit {column}, which holds at most {maximum}. With VARCHAR2(n BYTE), \
+non-ASCII characters take several bytes each, so text can be too long even when it has fewer characters."""
+fix = [
+  "Validate the length before saving (@Size), or widen the column.",
+  "For multi-language text, declare columns as VARCHAR2(n CHAR).",
+]
+
+[[rule]]
+id = "oracle.snapshot-too-old"
+title = "ORA-01555: snapshot too old"
+examples = [
+  'java.sql.SQLException: ORA-01555: snapshot too old: rollback segment number 9 with name "_SYSSMU9$" too small',
+]
+severity = "error"
+priority = 12
+tags = ["oracle", "database"]
+contains = ["ora-01555"]
+explain = """
+A long-running query needed old versions of rows that Oracle had already discarded from undo. Often a big \
+report or a cursor loop that commits while it's still reading."""
+fix = [
+  "Make the query faster, or don't commit inside a loop over an open cursor.",
+  "Ask the DBA about undo_retention and the undo tablespace size.",
+]
+
+[[rule]]
+id = "oracle.max-processes"
+title = "Oracle reached its session or process limit"
+examples = [
+  'java.sql.SQLException: Listener refused the connection with the following error: ORA-12519, TNS:no appropriate service handler found',
+  'ORA-12519, TNS:no appropriate service handler found',
+]
+severity = "critical"
+priority = 12
+tags = ["oracle", "database", "connections"]
+contains = ["ora-00018", "ora-00020", "ora-12519", "ora-12516"]
+explain = """
+The database won't accept more connections: it has reached its sessions or processes limit. Usually \
+connection pools across all app instances add up to more than the database allows, or connections leak."""
+fix = [
+  "Add up maximum-pool-size across every instance of every app using this database.",
+  "Look for leaked connections in the apps (Hikari: leak-detection-threshold).",
+  "Ask the DBA to compare against the processes and sessions parameters.",
+]
+
+[[rule]]
+id = "oracle.other"
+title = "Oracle error {code}"
+examples = [
+  'java.sql.SQLSyntaxErrorException: ORA-01722: invalid number',
+]
+severity = "error"
+priority = -5
+tags = ["oracle", "database"]
+contains = ["ora-"]
+regex = '(ORA-\d{5}): (.+)$'
+captures = ["code", "text"]
+explain = """
+Oracle returned {code}: {text}"""
+fix = [
+  "Look up {code} in Oracle's error reference: https://docs.oracle.com/error-help/db/",
+]

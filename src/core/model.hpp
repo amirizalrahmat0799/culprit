@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "core/analyzer.hpp"
 #include "core/entry.hpp"
 #include "core/filter.hpp"
 
@@ -15,6 +16,8 @@ namespace culprit {
 
 class LogModel {
 public:
+    explicit LogModel(std::shared_ptr<const RuleSet> rules = nullptr) : analyzer_(std::move(rules)) {}
+
     /// Adds entries; the new ones are checked against the current filter only.
     void append(std::vector<Entry> batch);
 
@@ -35,6 +38,9 @@ public:
     /// The next (or previous, `direction` -1) visible row after `from` with a level of at least `min`.
     std::optional<size_t> find(size_t from, int direction, Level min) const;
 
+    /// What the analyser found so far.
+    const Analyzer& analyzer() const { return analyzer_; }
+
 private:
     std::vector<Entry> entries_;
     std::vector<uint32_t> visible_;
@@ -43,6 +49,7 @@ private:
     Filter filter_;
     std::string first_source_;
     bool multiple_sources_ = false;
+    Analyzer analyzer_;
 };
 
 }  // namespace culprit

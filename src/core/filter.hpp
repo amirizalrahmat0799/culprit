@@ -9,6 +9,9 @@
 //   userId!=42              the field doesn't contain this
 //   /time(d)? out/          a regular expression, ignoring case
 //   has:stack               only entries with a stack trace
+//   has:problem             entries a rule recognised
+//   problem:hikari          entries recognised by a rule whose id starts with this
+//   group:3                 unrecognised errors in group 3 (as numbered by the analyser)
 
 #include <memory>
 #include <optional>
@@ -34,7 +37,7 @@ public:
     const std::vector<std::string>& highlights() const { return highlights_; }
 
 private:
-    enum class Kind { Text, LevelCmp, Field, Regex, HasStack };
+    enum class Kind { Text, LevelCmp, Field, Regex, HasStack, Problem, Group };
     enum class Op { Eq, Ne, Ge, Le, Gt, Lt };
     struct Term {
         Kind kind = Kind::Text;

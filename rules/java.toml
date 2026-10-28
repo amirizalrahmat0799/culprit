@@ -1,0 +1,602 @@
+# Java, the JVM, Spring Boot, Hibernate/JPA, Flyway and Liquibase.
+
+# ---- Spring Boot start-up ---------------------------------------------------------------------------
+
+[[rule]]
+id = "spring.port-in-use"
+title = "Port {port} is already in use"
+examples = [
+  'Web server failed to start. Port 8080 was already in use.',
+]
+severity = "critical"
+priority = 20
+tags = ["java", "spring", "startup"]
+contains = ["was already in use"]
+regex = 'Port (\d+) was already in use'
+captures = ["port"]
+explain = """
+The web server couldn't start because another program is already listening on port {port}. Usually it's \
+an older copy of this application that is still running, or another service set to the same port."""
+fix = [
+  "Find what uses the port: lsof -i :{port} (Linux, macOS) or netstat -ano | findstr :{port} (Windows).",
+  "Stop the old process, or start this one on another port: server.port=8081 (or SERVER_PORT=8081).",
+  "In Docker, check that two containers don't publish the same host port.",
+]
+
+[[rule]]
+id = "spring.bean-missing"
+title = "No bean of type {type}"
+examples = [
+  '''
+Parameter 0 of constructor in com.example.shop.OrderService required a bean of type 'com.example.shop.PaymentClient' that could not be found.''',
+]
+severity = "critical"
+priority = 10
+tags = ["java", "spring", "startup"]
+contains = ["that could not be found", "no qualifying bean of type"]
+regex = '''(?:required a bean of type|No qualifying bean of type) '([^']+)'(?: that could not be found)?'''
+captures = ["type"]
+explain = """
+Spring needed an object of type {type} to build another one, but nothing in the application context \
+provides it. The application can't start without it."""
+fix = [
+  "Check that the class is annotated (@Service, @Component, @Repository, @Configuration with @Bean).",
+  "Check that its package is under the @SpringBootApplication class's package, or add it to @ComponentScan.",
+  "If it comes from auto-configuration, check the starter dependency and any @ConditionalOn... conditions or profiles.",
+  "For several implementations of an interface, pick one with @Primary or @Qualifier.",
+]
+
+[[rule]]
+id = "spring.circular-dependency"
+title = "Beans depend on each other in a cycle"
+examples = [
+  'The dependencies of some of the beans in the application context form a cycle:',
+]
+severity = "critical"
+priority = 10
+tags = ["java", "spring", "startup"]
+contains = ["form a cycle", "unresolvable circular reference"]
+explain = """
+Two or more beans need each other to be created first (A needs B, B needs A), so Spring can't create \
+any of them. Since Spring Boot 2.6 this stops start-up instead of being resolved silently."""
+fix = [
+  "Look at the cycle Spring prints under 'The dependencies of some of the beans ... form a cycle'.",
+  "Move the shared logic into a third bean, or have one side publish an event instead of calling the other.",
+  "As a last resort, inject one side lazily (@Lazy) or set spring.main.allow-circular-references=true.",
+]
+
+[[rule]]
+id = "spring.datasource-url"
+title = "No database URL is configured"
+examples = [
+  '''
+Failed to configure a DataSource: 'url' attribute is not specified and no embedded datasource could be configured.''',
+]
+severity = "critical"
+priority = 10
+tags = ["java", "spring", "database", "startup"]
+contains = ["'url' attribute is not specified"]
+explain = """
+A JDBC/JPA starter is on the classpath, so Spring Boot tries to create a DataSource, but no \
+spring.datasource.url is set and no embedded database (H2, HSQLDB, Derby) is available."""
+fix = [
+  "Set spring.datasource.url (and username, password) in application.properties or as environment variables.",
+  "Check the active profile: the setting may be in application-<profile>.properties for a profile that isn't active.",
+  "If this application shouldn't use a database, remove the JDBC/JPA starter.",
+]
+
+[[rule]]
+id = "spring.application-failed"
+title = "The application failed to start"
+examples = [
+  '2026-10-28T09:41:05.240+08:00 ERROR 48211 --- [kedai] [           main] o.s.boot.SpringApplication               : Application run failed',
+]
+severity = "critical"
+priority = -10
+tags = ["java", "spring", "startup"]
+contains = ["application run failed", "application failed to start"]
+explain = """
+Spring Boot gave up starting the application. The reason is in the error just before this one, or in \
+the 'Caused by:' lines at the bottom of this stack trace."""
+fix = [
+  "Look at the last 'Caused by:' in the stack trace; it's the original error.",
+  "Look at the 'Description:' and 'Action:' block Spring Boot prints for common start-up problems.",
+]
+
+# ---- connection pool and transactions ---------------------------------------------------------------
+
+[[rule]]
+id = "hikari.pool-exhausted"
+title = "Connection pool {pool} ran out of connections"
+examples = [
+  '2026-10-28T09:42:11.502+08:00 ERROR 48211 --- [kedai] [nio-8080-exec-7] o.h.engine.jdbc.spi.SqlExceptionHelper   : HikariPool-1 - Connection is not available, request timed out after 30000ms (total=10, active=10, idle=0, waiting=12)',
+]
+severity = "error"
+priority = 10
+tags = ["java", "database", "hikari"]
+contains = ["connection is not available, request timed out"]
+regex = '(\S+) - Connection is not available, request timed out after (\d+)ms'
+captures = ["pool", "timeout"]
+explain = """
+Every connection in {pool} was in use, and a request waited {timeout} ms without getting one. Either \
+connections are held too long (slow queries, long transactions, calls to other services inside a \
+transaction), or they aren't returned at all (a leak), or the pool is too small for the load."""
+fix = [
+  "Turn on leak detection to see who holds connections: spring.datasource.hikari.leak-detection-threshold=20000",
+  "Look for slow queries and for @Transactional methods that call other services or wait on something.",
+  "Check the numbers in the message (total, active, idle, waiting) and compare with maximum-pool-size.",
+  "Make the pool bigger only after that; the database has its own connection limit too.",
+]
+
+[[rule]]
+id = "spring.rollback-only"
+title = "Transaction was rolled back because an inner call failed"
+examples = [
+  'org.springframework.transaction.UnexpectedRollbackException: Transaction silently rolled back because it has been marked as rollback-only',
+]
+severity = "error"
+tags = ["java", "spring", "transactions"]
+contains = ["marked as rollback-only"]
+explain = """
+A method inside the transaction threw an exception, which marked the whole transaction for rollback. The \
+caller caught that exception and carried on, so when the outer method finished Spring rolled everything \
+back and threw UnexpectedRollbackException instead of committing."""
+fix = [
+  "Find the inner exception logged earlier; it's the real failure.",
+  "Don't catch and ignore exceptions from @Transactional methods inside another transaction.",
+  "If the inner work should commit or fail on its own, give it its own transaction: @Transactional(propagation = REQUIRES_NEW).",
+]
+
+# ---- JPA / Hibernate ----------------------------------------------------------------------------------
+
+[[rule]]
+id = "hibernate.lazy-init"
+title = "Lazy relation read after the session closed"
+examples = [
+  'org.hibernate.LazyInitializationException: failed to lazily initialize a collection of role: com.example.shop.Order.items: could not initialize proxy - no Session',
+]
+severity = "error"
+tags = ["java", "hibernate", "jpa"]
+contains = ["lazyinitializationexception", "could not initialize proxy", "failed to lazily initialize"]
+explain = """
+A lazily loaded relation (a @OneToMany collection or a proxy) was read after the transaction and its \
+Hibernate session had ended, so there was nothing left to load it with. It often happens while turning \
+an entity into JSON in the controller."""
+fix = [
+  "Load what you need inside the transaction: a JOIN FETCH query, an @EntityGraph, or a DTO projection.",
+  "Return DTOs from the service instead of entities.",
+  "Avoid spring.jpa.open-in-view and hibernate.enable_lazy_load_no_trans as fixes; they hide extra queries.",
+]
+
+[[rule]]
+id = "hibernate.schema-missing"
+title = "Database schema doesn't match the entities: {what}"
+examples = [
+  'org.hibernate.tool.schema.spi.SchemaManagementException: Schema-validation: missing column [currency] in table [orders]',
+]
+severity = "critical"
+priority = 10
+tags = ["java", "hibernate", "jpa", "database", "startup"]
+contains = ["schema-validation: missing"]
+regex = 'Schema-validation: missing (.+)$'
+captures = ["what"]
+explain = """
+With spring.jpa.hibernate.ddl-auto=validate, Hibernate checks the database against the entity classes at \
+start-up and found a difference: missing {what}. Usually a migration wasn't applied, or the application \
+is connected to a different database or schema than expected."""
+fix = [
+  "Check that the migrations ran (flyway_schema_history / DATABASECHANGELOG) against this database.",
+  "Check spring.datasource.url and the default schema; it may be the wrong database.",
+  "If the entity is new, add a migration that creates the table or column.",
+]
+
+[[rule]]
+id = "jpa.constraint-violation"
+title = "A database constraint rejected the change"
+examples = [
+  'org.springframework.dao.DataIntegrityViolationException: could not execute statement [ERROR: null value in column "email" of relation "customers" violates not-null constraint]',
+]
+severity = "error"
+priority = -5
+tags = ["java", "jpa", "database"]
+contains = ["dataintegrityviolationexception", "org.hibernate.exception.constraintviolationexception"]
+explain = """
+The database refused an insert or update because it broke a constraint: a unique key, a foreign key, or \
+a NOT NULL column. The driver's message in the stack trace names the constraint."""
+fix = [
+  "Read the 'Caused by:' lines to find the constraint and the column.",
+  "For duplicates, check for an existing row first, or turn the error into a 409 Conflict for the caller.",
+  "For foreign keys, check that the referenced row exists and the order of inserts and deletes.",
+]
+
+# ---- Flyway and Liquibase -----------------------------------------------------------------------------
+
+[[rule]]
+id = "flyway.migration-failed"
+title = "Database migration {migration} failed"
+examples = [
+  'org.flywaydb.core.internal.command.DbMigrate$FlywayMigrateException: Migration V7__add_refunds.sql failed',
+]
+severity = "critical"
+priority = 15
+tags = ["java", "flyway", "database", "startup"]
+contains = [".sql failed"]
+regex = 'Migration (\S+\.sql) failed'
+captures = ["migration"]
+explain = """
+Flyway ran {migration} and the database rejected it. The application stops starting, and the database \
+may be left half migrated (on databases without transactional DDL, such as MySQL and Oracle)."""
+fix = [
+  "Read the SQL error under this message (SQL State, Error Code, Message) and fix the migration.",
+  "If part of it was applied, undo that part by hand, then run flyway repair to clear the failed entry.",
+  "Never edit a migration that has already run in another environment; add a new one instead.",
+]
+
+[[rule]]
+id = "flyway.checksum-mismatch"
+title = "Migration {version} was changed after it was applied"
+examples = [
+  'Migration checksum mismatch for migration version 3',
+]
+severity = "critical"
+priority = 15
+tags = ["java", "flyway", "database", "startup"]
+contains = ["checksum mismatch for migration"]
+regex = 'checksum mismatch for migration (?:version )?(\S+)'
+captures = ["version"]
+explain = """
+The migration file for version {version} is different from the one that was applied to this database, so \
+Flyway refuses to continue. Someone edited a migration that had already run."""
+fix = [
+  "Put the migration back the way it was, and make the change in a new migration.",
+  "If the edit was only formatting or comments, run flyway repair to accept the new checksum.",
+]
+
+[[rule]]
+id = "flyway.validate-failed"
+title = "Database migrations failed validation"
+examples = [
+  'org.flywaydb.core.api.exception.FlywayValidateException: Validate failed: Migrations have failed validation',
+]
+severity = "critical"
+priority = 5
+tags = ["java", "flyway", "database", "startup"]
+contains = ["migrations have failed validation", "detected failed migration", "detected resolved migration not applied"]
+explain = """
+Flyway compared the migration files with the database's history table and they disagree: a migration \
+failed earlier, a file was changed, or files are missing or out of order."""
+fix = [
+  "Read the lines after 'Validate failed' for which migration and why.",
+  "A failed migration must be cleaned up by hand and then removed from the history with flyway repair.",
+  "Out-of-order migrations can be allowed with spring.flyway.out-of-order=true, if that's intended.",
+]
+
+[[rule]]
+id = "liquibase.lock"
+title = "Liquibase can't get its change log lock"
+examples = [
+  'liquibase.exception.LockException: Could not acquire change log lock.  Currently locked by 7f3c2a1b9e0d (172.18.0.5) since 10/28/26, 9:40 AM',
+]
+severity = "critical"
+priority = 10
+tags = ["java", "liquibase", "database", "startup"]
+contains = ["could not acquire change log lock"]
+explain = """
+Liquibase keeps a lock row in DATABASECHANGELOGLOCK while it migrates. It's still set, either because \
+another instance is migrating right now, or because an earlier run was killed before it released it."""
+fix = [
+  "Make sure no other instance is starting at the same time.",
+  "If none is, release it: liquibase releaseLocks, or UPDATE DATABASECHANGELOGLOCK SET LOCKED = FALSE, LOCKGRANTED = NULL, LOCKEDBY = NULL WHERE ID = 1;",
+]
+
+[[rule]]
+id = "liquibase.checksum"
+title = "A Liquibase change set was changed after it ran"
+examples = [
+  '''
+liquibase.exception.ValidationFailedException: Validation Failed:
+     1 changesets check sum
+          db/changelog/001-init.xml::1::mizal was: 9:2f6c1d0a but is now: 9:8ab3e0f1''',
+]
+severity = "critical"
+priority = 10
+tags = ["java", "liquibase", "database", "startup"]
+contains = ["changesets check sum", "changeset check sum", "change sets check sum"]
+explain = """
+Liquibase found a change set whose contents differ from what was applied to this database, and stopped."""
+fix = [
+  "Revert the edit and put the change in a new change set.",
+  "If the change is intended, add a <validCheckSum> for it, or run liquibase clearCheckSums.",
+]
+
+# ---- JVM ----------------------------------------------------------------------------------------------
+
+[[rule]]
+id = "jvm.oom-heap"
+title = "Out of memory: Java heap space"
+examples = [
+  'Exception in thread "http-nio-8080-exec-3" java.lang.OutOfMemoryError: Java heap space',
+]
+severity = "critical"
+priority = 20
+tags = ["java", "jvm", "memory"]
+contains = ["outofmemoryerror: java heap space"]
+level = "any"
+explain = """
+The JVM couldn't fit a new object in the heap even after garbage collection. Either the heap is too small \
+for the workload, or something keeps objects alive that it shouldn't (a cache without limits, a growing \
+list or map, loading a whole table or file into memory)."""
+fix = [
+  "Take a heap dump next time: -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/tmp, and open it in Eclipse MAT or VisualVM.",
+  "Look for unbounded caches and collections, and for queries or files read whole; page or stream them.",
+  "In containers, size the heap from the memory limit: -XX:MaxRAMPercentage=75.",
+  "After an OutOfMemoryError the JVM is unreliable; restart it.",
+]
+
+[[rule]]
+id = "jvm.oom-metaspace"
+title = "Out of memory: Metaspace"
+examples = [
+  'java.lang.OutOfMemoryError: Metaspace',
+]
+severity = "critical"
+priority = 20
+tags = ["java", "jvm", "memory"]
+contains = ["outofmemoryerror: metaspace"]
+level = "any"
+explain = """
+The JVM ran out of the memory where it keeps class definitions. Usually classes are being created over and \
+over (proxies, scripting engines, redeploys in an application server) and never unloaded."""
+fix = [
+  "Check whether the number of loaded classes keeps growing: jcmd <pid> VM.classloader_stats.",
+  "Look for code that creates proxies, CGLIB classes or script engines per request.",
+  "If the application is just big, raise -XX:MaxMetaspaceSize.",
+]
+
+[[rule]]
+id = "jvm.gc-overhead"
+title = "Out of memory: GC overhead limit exceeded"
+examples = [
+  'java.lang.OutOfMemoryError: GC overhead limit exceeded',
+]
+severity = "critical"
+priority = 20
+tags = ["java", "jvm", "memory"]
+contains = ["gc overhead limit exceeded"]
+level = "any"
+explain = """
+The JVM was spending almost all its time collecting garbage and freeing almost nothing. The heap is \
+practically full; it's the same problem as 'Java heap space', caught a little earlier."""
+fix = [
+  "Treat it like a heap OutOfMemoryError: take a heap dump and look for what keeps growing.",
+  "Raise -Xmx (or -XX:MaxRAMPercentage) only if the workload really needs it.",
+]
+
+[[rule]]
+id = "jvm.native-thread"
+title = "The JVM can't create more threads"
+examples = [
+  'java.lang.OutOfMemoryError: unable to create native thread: possibly out of memory or process/resource limits reached',
+]
+severity = "critical"
+priority = 20
+tags = ["java", "jvm", "threads"]
+contains = ["unable to create native thread", "unable to create new native thread"]
+level = "any"
+explain = """
+The operating system refused to start another thread. The application has created too many threads (often \
+a thread pool without a limit, or new Thread() per request), or the process limit is low."""
+fix = [
+  "Count threads and see who creates them: jstack <pid> | grep -c 'java.lang.Thread.State'.",
+  "Use bounded executors instead of unbounded ones (Executors.newCachedThreadPool) or a thread per task.",
+  "Check the limits: ulimit -u, and pids.max in containers.",
+]
+
+[[rule]]
+id = "jvm.stack-overflow"
+title = "Stack overflow: endless recursion"
+examples = [
+  '''
+2026-10-28T10:02:13.441+08:00 ERROR 48211 --- [kedai] [nio-8080-exec-2] o.a.c.c.C.[.[.[/].[dispatcherServlet]    : Servlet.service() for servlet [dispatcherServlet] threw exception
+
+java.lang.StackOverflowError: null
+	at com.example.shop.Order.hashCode(Order.java:41)
+	at com.example.shop.OrderItem.hashCode(OrderItem.java:33)''',
+]
+severity = "error"
+priority = 10
+tags = ["java", "jvm"]
+contains = ["java.lang.stackoverflowerror"]
+level = "any"
+explain = """
+A method called itself (directly or through others) until the thread's stack ran out. Common causes are \
+recursion without an end condition, and entities that refer to each other being turned into JSON or a \
+string (toString, equals, hashCode on both sides of a relation)."""
+fix = [
+  "Look at the repeating frames in the stack trace to find the loop.",
+  "For JPA entities, exclude one side of bidirectional relations from toString/JSON (@JsonIgnore, @ToString.Exclude).",
+]
+
+# ---- common exceptions --------------------------------------------------------------------------------
+
+[[rule]]
+id = "java.npe"
+title = "NullPointerException"
+examples = [
+  '''
+2026-10-28T10:03:00.112+08:00 ERROR 48211 --- [kedai] [nio-8080-exec-4] c.e.shop.OrderController                 : Order failed
+
+java.lang.NullPointerException: Cannot invoke "com.example.shop.Customer.getEmail()" because "customer" is null
+	at com.example.shop.OrderService.place(OrderService.java:87)''',
+]
+severity = "error"
+tags = ["java"]
+contains = ["nullpointerexception"]
+explain = """
+Code used a reference that was null. Since Java 14 the message says which one ("Cannot invoke ... because \
+... is null"), and the first frame in your code shows where."""
+fix = [
+  "Open the first frame in your code and check where that value comes from.",
+  "Common sources: a repository lookup that found nothing, a missing request field or header, a missing setting.",
+  "Validate inputs at the edge (@Valid, @NotNull) and use Optional for lookups that can find nothing.",
+]
+
+[[rule]]
+id = "java.class-not-found"
+title = "Class {class} isn't on the classpath"
+examples = [
+  'java.lang.ClassNotFoundException: org.postgresql.Driver',
+]
+severity = "error"
+priority = 5
+tags = ["java", "build"]
+contains = ["classnotfoundexception", "noclassdeffounderror"]
+regex = '(?:ClassNotFoundException|NoClassDefFoundError):\s*(\S+)'
+captures = ["class"]
+explain = """
+The JVM needed the class {class} and couldn't find it. A dependency is missing, has the wrong scope \
+(provided, test), or two libraries need different versions of the same dependency."""
+fix = [
+  "Find which artifact contains it and check it's a runtime dependency: mvn dependency:tree / gradle dependencies.",
+  "NoClassDefFoundError right after a dependency upgrade usually means mismatched versions; align them (a BOM helps).",
+  "For javax.* vs jakarta.* classes, the library is built for another Java EE / Jakarta EE generation than Spring.",
+]
+
+[[rule]]
+id = "java.no-such-method"
+title = "Method missing at run time: mismatched library versions"
+examples = [
+  '''
+java.lang.NoSuchMethodError: 'void org.apache.commons.lang3.Validate.notBlank(java.lang.CharSequence)'''',
+]
+severity = "error"
+priority = 5
+tags = ["java", "build"]
+contains = ["nosuchmethoderror", "abstractmethoderror", "incompatibleclasschangeerror"]
+explain = """
+Code was compiled against one version of a library and is running with another, where that method or class \
+looks different. It almost always comes from two dependencies wanting different versions of a third."""
+fix = [
+  "Find which versions are on the classpath: mvn dependency:tree -Dverbose or gradle dependencyInsight.",
+  "Align them with a BOM or dependencyManagement, or exclude the older copy.",
+]
+
+[[rule]]
+id = "java.unsupported-class-version"
+title = "Compiled for a newer Java than the one running it"
+examples = [
+  '''
+Error: LinkageError occurred while loading main class com.example.shop.ShopApplication
+	java.lang.UnsupportedClassVersionError: com/example/shop/ShopApplication has been compiled by a more recent version of the Java Runtime (class file version 65.0), this version of the Java Runtime only recognizes class file versions up to 61.0''',
+]
+severity = "critical"
+priority = 15
+tags = ["java", "build", "startup"]
+contains = ["unsupportedclassversionerror", "class file version"]
+regex = 'class file version (\d+)'
+captures = ["version"]
+explain = """
+A class was compiled for a newer Java version than the JVM running it supports (class file version {version}; \
+61 is Java 17, 65 is Java 21). The build and the runtime use different Java versions."""
+fix = [
+  "Run with at least the Java version the code was built for (check java -version in the container or server).",
+  "Or build for the older version: maven.compiler.release / java.toolchain.languageVersion.",
+]
+
+[[rule]]
+id = "jackson.unrecognized-field"
+title = "JSON has a field the class doesn't: {field}"
+examples = [
+  'com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException: Unrecognized field "customer_id" (class com.example.shop.OrderRequest), not marked as ignorable',
+]
+severity = "error"
+tags = ["java", "json", "jackson"]
+contains = ["unrecognizedpropertyexception", "unrecognized field"]
+regex = 'Unrecognized field "([^"]+)"'
+captures = ["field"]
+explain = """
+Jackson received JSON with the field "{field}", and the target class has no property with that name. \
+Either the other side added or renamed a field, or the names don't match (camelCase vs snake_case)."""
+fix = [
+  "Add the property, or map the name with @JsonProperty(\"{field}\").",
+  "To ignore unknown fields: @JsonIgnoreProperties(ignoreUnknown = true), or spring.jackson.deserialization.fail-on-unknown-properties=false.",
+]
+
+[[rule]]
+id = "jackson.cannot-deserialize"
+title = "JSON couldn't be turned into {type}"
+examples = [
+  'com.fasterxml.jackson.databind.exc.InvalidFormatException: Cannot deserialize value of type `java.time.LocalDate` from String "28/10/2026"',
+]
+severity = "error"
+tags = ["java", "json", "jackson"]
+contains = ["cannot deserialize value of type", "cannot construct instance of"]
+regex = '(?:Cannot deserialize value of type|Cannot construct instance of) `([^`]+)`'
+captures = ["type"]
+explain = """
+The JSON doesn't fit {type}: a value has the wrong type (a string where a number or date is expected, an \
+object where a list is expected), or the class has no constructor Jackson can use."""
+fix = [
+  "Compare the JSON in the request with the class; the message shows the path to the bad value.",
+  "Classes need a no-argument constructor, or @JsonCreator on one; records work as they are.",
+  "For dates, check the format and that jackson-datatype-jsr310 is registered (Spring Boot does this).",
+]
+
+[[rule]]
+id = "spring.validation-failed"
+title = "Request failed validation"
+examples = [
+  '2026-10-28T10:05:44.120+08:00  WARN 48211 --- [kedai] [nio-8080-exec-9] .w.s.m.s.DefaultHandlerExceptionResolver : Resolved [org.springframework.web.bind.MethodArgumentNotValidException: Validation failed for argument [0]]',
+]
+severity = "warning"
+tags = ["java", "spring", "web"]
+contains = ["methodargumentnotvalidexception", "handlermethodvalidationexception"]
+priority = -1
+explain = """
+A request didn't pass the @Valid / @Validated checks, so Spring answered 400 Bad Request. That's the caller \
+sending bad data, not a failure of this service, unless the rules are wrong."""
+fix = [
+  "The message lists each field and the check it failed.",
+  "If many of these appear after a release, the caller and this API disagree about the contract.",
+]
+
+[[rule]]
+id = "spring.media-type"
+title = "Request body has a content type the endpoint doesn't accept"
+examples = [
+  '''
+2026-10-28T10:06:01.010+08:00  WARN 48211 --- [kedai] [nio-8080-exec-1] .w.s.m.s.DefaultHandlerExceptionResolver : Resolved [org.springframework.web.HttpMediaTypeNotSupportedException: Content-Type 'text/plain;charset=UTF-8' is not supported]''',
+]
+severity = "warning"
+tags = ["java", "spring", "web"]
+contains = ["httpmediatypenotsupportedexception", "content-type '"]
+regex = "Content-Type '([^']+)' is not supported"
+captures = ["type"]
+explain = """
+The request was sent as {type}, and the controller method doesn't accept that (it usually expects \
+application/json)."""
+fix = [
+  "Have the caller send Content-Type: application/json.",
+  "Or accept the type in the mapping: consumes = {...}.",
+]
+
+[[rule]]
+id = "java.ssl-untrusted"
+title = "TLS certificate isn't trusted by Java"
+examples = [
+  'javax.net.ssl.SSLHandshakeException: PKIX path building failed: sun.security.provider.certpath.SunCertPathBuilderException: unable to find valid certification path to requested target',
+]
+severity = "error"
+priority = 10
+tags = ["java", "tls", "network"]
+contains = ["pkix path building failed", "unable to find valid certification path"]
+explain = """
+Java connected over HTTPS/TLS but couldn't verify the server's certificate against its trust store. The \
+server uses a self-signed certificate or a private (company) certificate authority, or doesn't send its \
+intermediate certificates."""
+fix = [
+  "Check the server's chain: openssl s_client -connect host:443 -showcerts",
+  "Import the company CA into the trust store the app uses: keytool -importcert -cacerts -alias company-ca -file ca.crt",
+  "Or give the app its own trust store: -Djavax.net.ssl.trustStore=... (Spring Boot: spring.ssl.bundle).",
+  "Don't disable certificate checks to make it go away.",
+]

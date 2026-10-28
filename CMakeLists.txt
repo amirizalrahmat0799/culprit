@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(culprit VERSION 0.1.2 LANGUAGES CXX)
+project(culprit VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -33,20 +33,35 @@ FetchContent_Declare(ftxui
 FetchContent_MakeAvailable(ftxui)
 find_package(Threads REQUIRED)
 
-# --- core: parsing, filtering, reading; no terminal code, so it is easy to test -----------------------
+# --- built-in rules: rules/*.toml compiled into the program ---------------------------------------------
+file(GLOB CULPRIT_RULE_FILES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/rules/*.toml")
+set(CULPRIT_RULES_CPP "${CMAKE_BINARY_DIR}/generated/builtin_rules.cpp")
+add_custom_command(
+  OUTPUT "${CULPRIT_RULES_CPP}"
+  COMMAND "${CMAKE_COMMAND}" -DDIR=${CMAKE_SOURCE_DIR}/rules -DOUT=${CULPRIT_RULES_CPP}
+          -P "${CMAKE_SOURCE_DIR}/cmake/embed_rules.cmake"
+  DEPENDS ${CULPRIT_RULE_FILES} "${CMAKE_SOURCE_DIR}/cmake/embed_rules.cmake"
+  COMMENT "Embedding rules/*.toml"
+  VERBATIM)
+
+# --- core: parsing, filtering, reading, analysis; no terminal code, so it is easy to test --------------
 add_library(culprit_core STATIC
+  src/core/analyzer.cpp
   src/core/filter.cpp
   src/core/json.cpp
   src/core/model.cpp
   src/core/parser.cpp
   src/core/reader.cpp
+  src/core/rules.cpp
   src/core/stack.cpp
-  src/core/time.cpp)
+  src/core/time.cpp
+  src/core/toml.cpp
+  "${CULPRIT_RULES_CPP}")
 target_include_directories(culprit_core PUBLIC src)
 target_link_libraries(culprit_core PUBLIC Threads::Threads)
 
 # --- the culprit command ---------------------------------------------------------------------------------
-add_executable(culprit src/main.cpp src/tui/viewer.cpp src/tui/plain.cpp src/tui/style.cpp)
+add_executable(culprit src/main.cpp src/tui/viewer.cpp src/tui/plain.cpp src/tui/report.cpp src/tui/style.cpp)
 target_link_libraries(culprit PRIVATE culprit_core ftxui::screen ftxui::dom ftxui::component)
 target_compile_definitions(culprit PRIVATE CULPRIT_VERSION="${CULPRIT_VERSION}")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -63,7 +78,10 @@ if(CULPRIT_BUILD_TESTS)
     tests/parser_test.cpp
     tests/filter_test.cpp
     tests/stack_test.cpp
-    tests/model_test.cpp)
+    tests/model_test.cpp
+    tests/toml_test.cpp
+    tests/rules_test.cpp
+    tests/analyzer_test.cpp)
   target_link_libraries(culprit_tests PRIVATE culprit_core)
   target_compile_definitions(culprit_tests PRIVATE CULPRIT_TESTDATA="${CMAKE_SOURCE_DIR}/testdata")
   add_test(NAME culprit_tests COMMAND culprit_tests)
