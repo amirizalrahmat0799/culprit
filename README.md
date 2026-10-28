@@ -45,8 +45,24 @@ code** it happened, with the framework frames dimmed.
 
 ## Install
 
-Download the newest build from [Releases](https://github.com/amirizalrahmat0799/culprit/releases) (Windows,
-Linux, macOS) and put `culprit` on your `PATH`.
+**npm** (Windows, macOS, Linux x64 and arm64):
+
+```bash
+npm install -g culprit-cli
+# or try it without installing
+npx culprit-cli app.log
+```
+
+npm installs only the prebuilt binary for your machine. culprit itself doesn't need Node; Node just starts it.
+
+**Homebrew** (macOS, Linux):
+
+```bash
+brew install amirizalrahmat0799/tap/culprit
+```
+
+**Download:** take the build for your system from [Releases](https://github.com/amirizalrahmat0799/culprit/releases)
+and put `culprit` on your `PATH`.
 
 To build it yourself you need a C++20 compiler and CMake 3.24 or newer. [FTXUI](https://github.com/ArthurSonzogni/FTXUI),
 the terminal UI library, is downloaded during configure unless it's already installed.

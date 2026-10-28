@@ -1,0 +1,36 @@
+{
+  "name": "culprit-cli",
+  "version": "0.0.0",
+  "description": "Terminal log viewer that groups stack traces and points at the line in your code that failed.",
+  "keywords": [
+    "logs",
+    "log-viewer",
+    "tui",
+    "terminal",
+    "cli",
+    "stack-trace",
+    "debugging",
+    "docker-compose",
+    "kubernetes",
+    "spring-boot",
+    "pino"
+  ],
+  "homepage": "https://github.com/amirizalrahmat0799/culprit#readme",
+  "bugs": "https://github.com/amirizalrahmat0799/culprit/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/amirizalrahmat0799/culprit.git"
+  },
+  "license": "MIT",
+  "author": "Ahmad Amirizal Rahmat",
+  "bin": {
+    "culprit": "bin/culprit.js"
+  },
+  "files": [
+    "bin"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {}
+}
