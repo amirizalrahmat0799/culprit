@@ -12,8 +12,8 @@ const PACKAGES = {
   "linux-arm64": "culprit-cli-linux-arm64",
   "darwin-x64": "culprit-cli-darwin-universal",
   "darwin-arm64": "culprit-cli-darwin-universal",
-  "win32-x64": "culprit-cli-win32-x64",
-  "win32-arm64": "culprit-cli-win32-x64", // runs under Windows' x64 emulation
+  "win32-x64": "culprit-cli-windows-x64",
+  "win32-arm64": "culprit-cli-windows-x64", // runs under Windows' x64 emulation
 };
 
 const SOURCE = "https://github.com/amirizalrahmat0799/culprit#install";

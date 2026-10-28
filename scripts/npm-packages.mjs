@@ -24,7 +24,7 @@ const targets = [
   { release: "linux-x64", name: "culprit-cli-linux-x64", os: ["linux"], cpu: ["x64"] },
   { release: "linux-arm64", name: "culprit-cli-linux-arm64", os: ["linux"], cpu: ["arm64"] },
   { release: "macos-universal", name: "culprit-cli-darwin-universal", os: ["darwin"], cpu: ["x64", "arm64"] },
-  { release: "windows-x64", name: "culprit-cli-win32-x64", os: ["win32"], cpu: ["x64", "arm64"], windows: true },
+  { release: "windows-x64", name: "culprit-cli-windows-x64", os: ["win32"], cpu: ["x64", "arm64"], windows: true },
 ];
 
 const main = JSON.parse(readFileSync(join(root, "packaging/npm/culprit-cli/package.json"), "utf8"));

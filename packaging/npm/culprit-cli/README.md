@@ -19,7 +19,7 @@ logback's default patterns, Python, Go, PostgreSQL, and nginx and Apache access 
 Go stack traces in one piece and shows the first frame that's in **your** code.
 
 This package is a small launcher. npm also installs the prebuilt binary for your machine from one of these:
-`culprit-cli-linux-x64`, `culprit-cli-linux-arm64`, `culprit-cli-darwin-universal`, `culprit-cli-win32-x64`.
+`culprit-cli-linux-x64`, `culprit-cli-linux-arm64`, `culprit-cli-darwin-universal`, `culprit-cli-windows-x64`.
 culprit itself is written in C++ and doesn't need Node to run; Node only starts it.
 
 Keys, filters and options: [github.com/amirizalrahmat0799/culprit](https://github.com/amirizalrahmat0799/culprit#readme)
