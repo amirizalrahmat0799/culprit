@@ -15,6 +15,11 @@
 #include "core/model.hpp"
 #include "core/reader.hpp"
 #include "core/rules.hpp"
+#include "cli.hpp"
+#ifdef CULPRIT_WITH_AI
+#include "ai/subject.hpp"
+#include "cli_ai.hpp"
+#endif
 #include "tui/plain.hpp"
 #include "tui/report.hpp"
 #include "tui/viewer.hpp"
@@ -48,6 +53,9 @@ Usage:
   culprit analyze [options] [file...]  print what went wrong: the likely root cause, known problems
                                        and repeated errors (reads stdin when no file is given)
   culprit rules [--check] [id...]      list the rules culprit knows, show one, or check your own
+  culprit investigate [file...]        ask an AI to find the root cause in your code (set it up first)
+  culprit ai setup                     choose the AI: Ollama on this computer, a free cloud service,
+                                       Claude or OpenAI with your key, or none
 
 Examples:
   culprit app.log
@@ -63,12 +71,13 @@ Options:
       --no-stack         with --plain: leave out stack traces
       --no-color         no colours (also when NO_COLOR is set)
       --rules <path>     more rules: a .toml file or a folder of them (can be repeated)
+      --no-ai            don't use AI in this run
   -v, --version
   -h, --help
 
 Rules are also read from ~/.config/culprit/rules and from .culprit/rules in the current folder or
 any folder above it. See https://github.com/amirizalrahmat0799/culprit/blob/main/docs/rules.md
-In the viewer, press a for the problems it found, and ? for the keys.
+In the viewer, press a for the problems it found, i to investigate an error with AI, and ? for the keys.
 )";
 
 constexpr const char* kAnalyzeHelp = R"(culprit analyze - find what went wrong in a log
@@ -87,6 +96,8 @@ Options:
   -F, --filter <query>   analyse only the entries that match, e.g. "source=api"
       --top <n>          how many groups of unrecognised errors to list (default 10)
       --rules <path>     more rules: a .toml file or a folder of them (can be repeated)
+      --investigate      also ask the AI (culprit ai setup) to investigate the likely root cause
+      --yes              with --investigate: don't ask before sending to a provider that isn't local
       --no-color         no colours (also when NO_COLOR is set or the output isn't a terminal)
 )";
 
@@ -105,101 +116,14 @@ Your rules go in .culprit/rules/*.toml in your project, or ~/.config/culprit/rul
 A rule with the id of one of culprit's replaces it; `disabled = true` turns it off.
 )";
 
-int culprit_terminal_width() {
-#ifdef _WIN32
-    CONSOLE_SCREEN_BUFFER_INFO info;
-    if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info)) return info.srWindow.Right - info.srWindow.Left + 1;
-#else
-    struct winsize ws {};
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0) return ws.ws_col;
-#endif
-    return 100;
-}
-
-bool stdout_is_terminal() { return isatty(fileno(stdout)) != 0; }
-bool stdin_is_terminal() { return isatty(fileno(stdin)) != 0; }
-
-// Keeps a copy of the piped stdin for reading logs, then points stdin back at the keyboard so the viewer
-// can read keys. Returns the copy (a descriptor, or a HANDLE on Windows), or -1 when that isn't possible.
-intptr_t take_piped_stdin() {
-#ifdef _WIN32
-    HANDLE original = GetStdHandle(STD_INPUT_HANDLE);
-    HANDLE copy = nullptr;
-    if (!DuplicateHandle(GetCurrentProcess(), original, GetCurrentProcess(), &copy, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
-        return -1;
-    }
-    HANDLE console = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
-                                 OPEN_EXISTING, 0, nullptr);
-    if (console == INVALID_HANDLE_VALUE) return -1;
-    SetStdHandle(STD_INPUT_HANDLE, console);
-    std::FILE* ignored = nullptr;
-    freopen_s(&ignored, "CONIN$", "r", stdin);
-    return reinterpret_cast<intptr_t>(copy);
-#else
-    int copy = dup(STDIN_FILENO);
-    if (copy < 0) return -1;
-    int tty = open("/dev/tty", O_RDONLY);
-    if (tty < 0) {
-        close(copy);
-        return -1;
-    }
-    dup2(tty, STDIN_FILENO);
-    close(tty);
-    return copy;
-#endif
-}
-
-// culprit's rules, then the user's, the project's, and any given with --rules. Problems in rule files are
-// added to `errors`; the rules that are fine still load.
-std::shared_ptr<culprit::RuleSet> load_rules(const std::vector<std::string>& extra, std::vector<std::string>& errors) {
-    auto rules = culprit::RuleSet::builtin();
-    std::error_code ec;
-    for (const auto& path : culprit::default_rule_paths(std::filesystem::current_path(ec).string())) rules->add_path(path, errors);
-    for (const auto& path : extra) rules->add_path(path, errors);
-    return rules;
-}
-
-struct Inputs {
-    std::vector<std::string> files;
-    std::vector<culprit::Reader::Input> list;
-    std::string title;
-};
-
-Inputs make_inputs(std::vector<std::string> files) {
-    Inputs in;
-    if (files.empty()) files.push_back("-");
-    for (const auto& f : files) {
-        culprit::Reader::Input input;
-        input.path = f;
-        if (files.size() > 1) input.label = f == "-" ? "stdin" : std::filesystem::path(f).filename().string();
-        in.list.push_back(input);
-        if (!in.title.empty()) in.title += ", ";
-        in.title += f == "-" ? "stdin" : std::filesystem::path(f).filename().string();
-    }
-    in.files = std::move(files);
-    return in;
-}
-
-// Reads every input to the end, calling `each` for every entry in order.
-template <typename F>
-void read_all(const Inputs& in, F&& each) {
-    culprit::Reader reader(in.list, false);
-    reader.start(nullptr);
-    while (true) {
-        bool done = reader.finished();
-        for (auto& err : reader.take_errors()) std::fprintf(stderr, "culprit: %s\n", err.c_str());
-        for (auto& e : reader.take()) each(e);
-        if (done) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    reader.stop();
-}
+using namespace culprit::cli;
 
 int run_analyze(int argc, char** argv) {
     std::vector<std::string> files, rule_paths;
     std::string filter, format = "text", fail_on = "never";
     size_t top = 10;
     bool color = std::getenv("NO_COLOR") == nullptr && stdout_is_terminal();
+    bool investigate = false, yes = false;
     for (int i = 2; i < argc; ++i) {
         std::string a = argv[i];
         auto value = [&](const char* name) -> std::string {
@@ -225,6 +149,10 @@ int run_analyze(int argc, char** argv) {
             top = static_cast<size_t>(std::max(0, std::atoi(value("--top").c_str())));
         } else if (is("--rules")) {
             rule_paths.push_back(value("--rules"));
+        } else if (a == "--investigate") {
+            investigate = true;
+        } else if (a == "--yes" || a == "-y") {
+            yes = true;
         } else if (a == "--no-color") {
             color = false;
         } else if (a == "-") {
@@ -270,16 +198,38 @@ int run_analyze(int argc, char** argv) {
     Inputs in = make_inputs(files);
     culprit::Analyzer analyzer(rules);
     uint32_t index = 0;
+    std::vector<culprit::Entry> kept;  // only for --investigate
     read_all(in, [&](culprit::Entry& e) {
-        if (f.matches(e)) analyzer.add(e, index++);
+        if (!f.matches(e)) return;
+        analyzer.add(e, index++);
+        if (investigate) kept.push_back(std::move(e));
     });
     culprit::Report report = analyzer.report();
 
     options.color = color && options.format == culprit::ReportFormat::Text;
     options.title = in.title;
     options.top = top;
-    if (stdout_is_terminal()) options.width = std::max(60, std::min(140, culprit_terminal_width()));
+    if (stdout_is_terminal()) options.width = std::max(60, std::min(140, terminal_width()));
     culprit::print_report(stdout, report, options);
+
+    if (investigate) {
+#ifdef CULPRIT_WITH_AI
+        if (auto target = culprit::ai::default_target(report)) {
+            *target = culprit::ai::richest_occurrence(*target, kept.size(), [&](uint32_t i) -> const culprit::Entry& { return kept[i]; });
+            std::fputs(options.format == culprit::ReportFormat::Text ? "\n" : "", stdout);
+            std::fflush(stdout);
+            InvestigateOptions io;
+            io.format = options.format;
+            io.color = options.color;
+            io.yes = yes;
+            io.width = options.width;
+            investigate_entry(kept, *target, report, *rules, io);
+        }
+#else
+        (void)yes;
+        std::fputs("culprit: this culprit was built without AI (CULPRIT_AI=OFF)\n", stderr);
+#endif
+    }
 
     if (fail_level >= 0) {
         for (const auto& p : report.problems) {
@@ -374,10 +324,18 @@ int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "analyze") == 0) return run_analyze(argc, argv);
     if (argc > 1 && std::strcmp(argv[1], "analyse") == 0) return run_analyze(argc, argv);
     if (argc > 1 && std::strcmp(argv[1], "rules") == 0) return run_rules(argc, argv);
+    if (argc > 1 && (std::strcmp(argv[1], "ai") == 0 || std::strcmp(argv[1], "investigate") == 0)) {
+#ifdef CULPRIT_WITH_AI
+        return std::strcmp(argv[1], "ai") == 0 ? run_ai(argc, argv) : run_investigate(argc, argv);
+#else
+        std::fputs("culprit: this culprit was built without AI (CULPRIT_AI=OFF)\n", stderr);
+        return 2;
+#endif
+    }
 
     std::vector<std::string> files, rule_paths;
     std::string filter;
-    bool follow = true, plain = false, color = std::getenv("NO_COLOR") == nullptr, stack = true;
+    bool follow = true, plain = false, color = std::getenv("NO_COLOR") == nullptr, stack = true, no_ai = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -408,6 +366,8 @@ int main(int argc, char** argv) {
             plain = true;
         } else if (a == "--no-color") {
             color = false;
+        } else if (a == "--no-ai") {
+            no_ai = true;
         } else if (a == "--no-stack") {
             stack = false;
         } else if (a == "-") {
@@ -477,6 +437,7 @@ int main(int argc, char** argv) {
     options.title = in.title;
     options.initial_filter = filter;
     options.rules = rules;
+    options.no_ai = no_ai;
     if (!rule_errors.empty()) {
         options.message = rule_errors.size() == 1 ? rule_errors.front()
                                                   : std::to_string(rule_errors.size()) + " problems in rule files; run culprit rules --check";

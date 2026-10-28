@@ -1,0 +1,1 @@
+ALTER TABLE orders ADD COLUMN currency char(3) NOT NULL DEFAULT 'MYR';

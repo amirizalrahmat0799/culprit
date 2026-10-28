@@ -26,12 +26,18 @@ jobs:
         run: |
           exe=$(find build -name 'culprit' -o -name 'culprit.exe' | grep -v '\.dir' | grep -v '_tests' | head -1)
           "$exe" --version
-          for f in testdata/*; do "$exe" --plain --no-color "$f" > /dev/null; done
+          for f in testdata/*.log testdata/*.json; do "$exe" --plain --no-color "$f" > /dev/null; done
           "$exe" --plain --no-color --filter "level>=error" testdata/spring-boot.log | grep -q "in your code\|OrderService"
           cat testdata/compose.log | "$exe" --plain --no-color | grep -q "backend-1"
           "$exe" rules --check
-          for f in testdata/*; do "$exe" analyze --format json "$f" > /dev/null; done
+          for f in testdata/*.log testdata/*.json; do "$exe" analyze --format json "$f" > /dev/null; done
           "$exe" analyze --no-color testdata/incident-migration.log | grep -q "Database migration V7__add_refunds.sql failed"
           if "$exe" analyze --fail-on error testdata/incident-migration.log > /dev/null; then
             echo "--fail-on error should have failed"; exit 1
           fi
+      - name: AI investigation against a fake provider
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          exe=$(find build -name 'culprit' -type f | grep -v '\.dir' | head -1)
+          bash tests/ai_e2e.sh "$exe"

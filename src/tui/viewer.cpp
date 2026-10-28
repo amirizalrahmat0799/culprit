@@ -9,11 +9,27 @@
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/terminal.hpp>
 
+#include <chrono>
+#include <filesystem>
+#include <future>
+#include <mutex>
+#include <thread>
+
 #include "core/analyzer.hpp"
+#include "core/filter.hpp"
 #include "core/model.hpp"
 #include "core/rules.hpp"
 #include "core/stack.hpp"
 #include "tui/style.hpp"
+
+#ifdef CULPRIT_WITH_AI
+#include "ai/config.hpp"
+#include "ai/http.hpp"
+#include "ai/investigator.hpp"
+#include "ai/provider.hpp"
+#include "ai/subject.hpp"
+#include "ai/workspace.hpp"
+#endif
 
 namespace culprit {
 namespace {
@@ -114,6 +130,7 @@ constexpr const char* kHelp[] = {
     "  a            what culprit found: the likely root cause, known problems and",
     "               repeated errors. Enter shows that problem's entries.",
     "  p  P         next / previous entry with a problem    ◆ marks them",
+    "  i            ask the AI to investigate the selected error (culprit ai setup)",
     "",
     "  Filter:  payment  \"order failed\"  -health  level>=warn  logger=OrderService",
     "           orderId=8812  /time(d)? out/  has:stack  has:problem  problem:hikari",
@@ -152,6 +169,9 @@ public:
             return on_event(e);
         });
         app.Loop(component);
+#ifdef CULPRIT_WITH_AI
+        stop_investigation();
+#endif
         reader_.stop();
         return 0;
     }
@@ -198,10 +218,16 @@ private:
 
     bool on_event(Event e) {
         if (e == Event::Custom) {
+#ifdef CULPRIT_WITH_AI
+            answer_queries();
+#endif
             drain();
             return true;
         }
         if (editing_) return on_filter_key(e);
+#ifdef CULPRIT_WITH_AI
+        if (inv_view_) return on_investigation_key(e);
+#endif
         if (panel_) return on_panel_key(e);
         if (help_) {
             if (e == Event::Character('?') || e == Event::Escape || e == Event::Character('q')) help_ = false;
@@ -279,6 +305,11 @@ private:
         if (e == Event::Character('w')) return jump(1, Level::Warn);
         if (e == Event::Character('W')) return jump(-1, Level::Warn);
         if (e == Event::Character('?')) return help_ = true, true;
+        if (e == Event::Character('i')) {
+            if (rows() == 0) return true;
+            start_investigation(model_.visible()[cursor_]);
+            return true;
+        }
         if (e == Event::Character('a')) {
             panel_ = true;
             panel_selected_ = 0;
@@ -368,6 +399,11 @@ private:
             return true;
         }
         if (e == Event::Character('?')) return help_ = true, panel_ = false, true;
+        if (e == Event::Character('i') && n > 0) {
+            const PanelItem& item = items_[panel_selected_];
+            start_investigation(item.problem ? report_.problems[item.index].first.index : report_.groups[item.index].first.index);
+            return true;
+        }
         return true;
     }
 
@@ -588,6 +624,14 @@ private:
 
         Elements screen;
         screen.push_back(header());
+#ifdef CULPRIT_WITH_AI
+        if (inv_view_) {
+            screen.push_back(investigation(height - 3) | size(HEIGHT, EQUAL, height - 3));
+            screen.push_back(text(""));
+            screen.push_back(investigation_footer());
+            return vbox(std::move(screen));
+        }
+#endif
         if (panel_) {
             screen.push_back(panel(height - 3) | size(HEIGHT, EQUAL, height - 3));
             screen.push_back(text(""));
@@ -614,6 +658,9 @@ private:
         Elements parts{text(" culprit ") | bold | color(Color::Black) | bgcolor(Color::RedLight),
                        text(" " + options_.title + " ") | bold};
         if (panel_) parts.push_back(text(" PROBLEMS ") | bold | color(Color::Black) | bgcolor(Color::MagentaLight));
+#ifdef CULPRIT_WITH_AI
+        if (inv_view_) parts.push_back(text(" INVESTIGATE ") | bold | color(Color::Black) | bgcolor(Color::CyanLight));
+#endif
         parts.push_back(filler());
         parts.push_back(text(thousands(model_.total()) + " entries  ") | color(Color::White));
         size_t errors = model_.count(Level::Error) + model_.count(Level::Fatal);
@@ -782,7 +829,7 @@ private:
         auto key = [](const char* k, const char* what) {
             return hbox({text(k) | bold | color(Color::Cyan), text(" " + std::string(what) + "  ") | dim});
         };
-        return hbox({text(" "), key("/", "filter"), key("Enter", "details"), key("a", "problems"), key("n/N", "errors"),
+        return hbox({text(" "), key("/", "filter"), key("Enter", "details"), key("a", "problems"), key("i", "investigate"), key("n/N", "errors"),
                      key("e", "warn+err"), key("f", "follow"), key("?", "help"), key("q", "quit"), filler()});
     }
 
@@ -790,8 +837,8 @@ private:
         auto key = [](const char* k, const char* what) {
             return hbox({text(k) | bold | color(Color::Cyan), text(" " + std::string(what) + "  ") | dim});
         };
-        return hbox({text(" "), key("↑↓", "choose"), key("Enter", "show its entries"), key("Tab", "scroll text"),
-                     key("Esc", "back to the log"), filler()});
+        return hbox({text(" "), key("↑↓", "choose"), key("Enter", "show its entries"), key("i", "investigate with AI"),
+                     key("Tab", "scroll text"), key("Esc", "back to the log"), filler()});
     }
 
     Reader& reader_;
@@ -824,6 +871,277 @@ private:
     size_t report_total_ = 0;
     bool report_ready_ = false;
     std::vector<PanelItem> items_;
+
+    // ---- AI investigation ----------------------------------------------------------------------------
+#ifdef CULPRIT_WITH_AI
+    struct Query {
+        std::string text;
+        std::promise<std::string> answer;
+    };
+    // shared with the worker thread
+    struct Investigation {
+        std::mutex mutex;
+        std::vector<ai::Step> steps;
+        std::optional<ai::Finding> finding;
+        std::vector<std::shared_ptr<Query>> queries;  // log searches, answered on the UI thread
+        std::atomic<bool> cancel{false};
+        std::atomic<bool> done{false};
+        ai::Subject subject;
+        ai::Settings settings;
+        std::thread worker;
+        std::chrono::steady_clock::time_point started;
+    };
+    std::shared_ptr<Investigation> inv_;
+    bool inv_view_ = false;
+    bool inv_consent_ = false;
+    int inv_scroll_ = 0;
+
+    void start_investigation(uint32_t index) {
+        std::error_code ec;
+        std::string cwd = std::filesystem::current_path(ec).string();
+        auto avail = ai::availability(options_.no_ai, cwd);
+        if (!avail.allowed) {
+            message_ = avail.reason;
+            panel_ = false;
+            return;
+        }
+        if (inv_ && !inv_->done) {
+            inv_view_ = true;  // one at a time: show the running one
+            panel_ = false;
+            return;
+        }
+        stop_investigation();
+        index = ai::richest_occurrence(index, model_.total(), [this](uint32_t i) -> const Entry& { return model_.entry(i); });
+        const Entry& e = model_.entry(index);
+        std::vector<const Entry*> before;
+        for (uint32_t i = index >= 20 ? index - 20 : 0; i < index; ++i) before.push_back(&model_.entry(i));
+
+        auto inv = std::make_shared<Investigation>();
+        inv->settings = avail.settings;
+        inv->subject = ai::make_subject(e, before, &report(), options_.rules.get());
+        App* app = app_;
+        std::weak_ptr<Investigation> weak = inv;
+        inv->subject.search_log = [weak, app](const std::string& text) -> std::string {
+            auto q = std::make_shared<Query>();
+            q->text = text;
+            auto answer = q->answer.get_future();
+            {
+                auto inv = weak.lock();
+                if (!inv) return "error: cancelled";
+                std::lock_guard<std::mutex> lock(inv->mutex);
+                inv->queries.push_back(q);
+            }
+            app->PostEvent(Event::Custom);
+            while (answer.wait_for(std::chrono::milliseconds(100)) != std::future_status::ready) {
+                auto inv = weak.lock();
+                if (!inv || inv->cancel) return "error: cancelled";
+            }
+            return answer.get();
+        };
+        inv_ = inv;
+        inv_view_ = true;
+        inv_scroll_ = 0;
+        panel_ = false;
+        inv_consent_ = !inv->settings.local() && inv->settings.confirm;
+        if (!inv_consent_) launch();
+    }
+
+    void launch() {
+        auto inv = inv_;
+        App* app = app_;
+        std::error_code ec;
+        std::string root = ai::find_project_root(std::filesystem::current_path(ec).string());
+        inv->started = std::chrono::steady_clock::now();
+        inv->worker = std::thread([inv, app, root] {
+            auto transport = ai::system_transport();
+            auto model = ai::make_model(inv->settings, *transport);
+            ai::Workspace workspace(root);
+            ai::Investigator investigator(*model, workspace, inv->settings);
+            ai::Finding f = investigator.run(
+                inv->subject,
+                [&](const ai::Step& step) {
+                    {
+                        std::lock_guard<std::mutex> lock(inv->mutex);
+                        inv->steps.push_back(step);
+                    }
+                    app->PostEvent(Event::Custom);
+                },
+                &inv->cancel);
+            {
+                std::lock_guard<std::mutex> lock(inv->mutex);
+                inv->finding = std::move(f);
+            }
+            inv->done = true;
+            app->PostEvent(Event::Custom);
+        });
+    }
+
+    void stop_investigation() {
+        if (!inv_) return;
+        inv_->cancel = true;
+        if (inv_->worker.joinable()) inv_->worker.join();
+    }
+
+    void answer_queries() {
+        if (!inv_) return;
+        std::vector<std::shared_ptr<Query>> queries;
+        {
+            std::lock_guard<std::mutex> lock(inv_->mutex);
+            queries.swap(inv_->queries);
+        }
+        for (auto& q : queries) {
+            std::string out;
+            size_t n = 0;
+            std::string needle = q->text;
+            for (char& c : needle) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            for (size_t i = 0; i < model_.total() && n < 30; ++i) {
+                const Entry& e = model_.entry(i);
+                if (!contains_icase(e.message, needle) && !contains_icase(e.stack, needle)) continue;
+                out += "line " + std::to_string(e.line) + "  " + e.time_text + "  " + std::string(level_name(e.level)) + "  " +
+                       e.source + "  " + one_line(e.message).substr(0, 240) + "\n";
+                ++n;
+            }
+            q->answer.set_value(n ? out : "no log entries contain \"" + q->text + "\"");
+        }
+    }
+
+    bool on_investigation_key(Event e) {
+        if (e == Event::CtrlC) {
+            app_->Exit();  // the worker is cancelled and joined when the loop ends
+            return true;
+        }
+        if (inv_consent_) {
+            if (e == Event::Character('y') || e == Event::Character('Y')) {
+                inv_consent_ = false;
+                launch();
+            } else if (e == Event::Character('n') || e == Event::Escape || e == Event::Character('q')) {
+                inv_consent_ = false;
+                inv_view_ = false;
+                inv_.reset();
+            }
+            return true;
+        }
+        if (e == Event::Escape || e == Event::Character('q')) {
+            if (inv_ && !inv_->done && !inv_->cancel) {
+                inv_->cancel = true;  // the worker stops at its next step; the view shows "cancelled"
+                return true;
+            }
+            // pressed again while it's still stopping: go back now, it finishes in the background
+            inv_view_ = false;
+            return true;
+        }
+        if (e == Event::ArrowDown || e == Event::Character('j')) return ++inv_scroll_, true;
+        if (e == Event::ArrowUp || e == Event::Character('k')) return inv_scroll_ = std::max(0, inv_scroll_ - 1), true;
+        if (e == Event::PageDown || e == Event::Character(' ')) return inv_scroll_ += 10, true;
+        if (e == Event::PageUp) return inv_scroll_ = std::max(0, inv_scroll_ - 10), true;
+        if (e == Event::Character('i')) return inv_view_ = false, true;
+        return true;
+    }
+
+    Element investigation(int height) {
+        if (!inv_) return text("");
+        Elements out;
+        const ai::Settings& st = inv_->settings;
+        out.push_back(paragraph(inv_->subject.title) | bold);
+        out.push_back(text(inv_->subject.where) | dim);
+        out.push_back(text("with " + st.name + " · " + st.model + (st.local() ? "  (on this computer)" : "")) | color(Color::Cyan));
+        out.push_back(text(""));
+
+        if (inv_consent_) {
+            out.push_back(paragraph("This investigation sends to " + st.host() + " (" + st.name +
+                                    "): the error, its stack trace, the log lines before it, a summary of the log, the names of the "
+                                    "project's files, and the files the AI chooses to read.") |
+                          color(Color::Yellow));
+            out.push_back(paragraph("Files that may hold secrets are never read, and values like passwords are redacted. To send without "
+                                    "asking, set confirm = false in " + ai::settings_path() + ".") | dim);
+            out.push_back(text(""));
+            out.push_back(hbox({text(" y ") | bold | color(Color::Black) | bgcolor(Color::Green), text(" send   "),
+                                text(" n ") | bold | color(Color::Black) | bgcolor(Color::Red), text(" cancel")}));
+            return vbox(std::move(out));
+        }
+
+        std::vector<ai::Step> steps;
+        std::optional<ai::Finding> finding;
+        {
+            std::lock_guard<std::mutex> lock(inv_->mutex);
+            steps = inv_->steps;
+            finding = inv_->finding;
+        }
+        for (const auto& step : steps) {
+            switch (step.kind) {
+                case ai::Step::Kind::Thinking: out.push_back(text("  … " + step.text) | dim); break;
+                case ai::Step::Kind::Tool: out.push_back(hbox({text("  ▸ ") | color(Color::Cyan), text(step.text)})); break;
+                case ai::Step::Kind::Note: out.push_back(hbox({text("    "), paragraph(step.text) | dim | flex})); break;
+                case ai::Step::Kind::Warning: out.push_back(text("  ! " + step.text) | color(Color::Yellow)); break;
+            }
+        }
+        if (!inv_->done) {
+            auto secs = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - inv_->started).count();
+            out.push_back(text(inv_->cancel ? "  cancelling…" : "  working… " + std::to_string(secs) + " s   (Esc cancels)") |
+                          color(Color::Yellow));
+        }
+        if (finding) {
+            const ai::Finding& f = *finding;
+            out.push_back(separatorLight());
+            if (!f.ok) {
+                out.push_back(paragraph("The investigation stopped: " + f.error) | color(Color::Red));
+            } else {
+                Color conf = f.confidence == "high" ? Color::Green : f.confidence == "medium" ? Color::Yellow : Color::Red;
+                out.push_back(hbox({text("ROOT CAUSE ") | bold, text("(" + f.confidence + " confidence)") | color(conf)}));
+                out.push_back(paragraph(f.summary) | bold);
+                if (!f.explanation.empty() && f.explanation != f.summary) {
+                    out.push_back(text(""));
+                    out.push_back(paragraph(f.explanation));
+                }
+                if (!f.evidence.empty()) {
+                    out.push_back(text(""));
+                    out.push_back(text("Evidence") | bold | color(Color::Cyan));
+                    for (const auto& ev : f.evidence) {
+                        out.push_back(hbox({text(ev.verified ? "  ✓ " : "  ✗ ") | color(ev.verified ? Color::Green : Color::Red) | bold,
+                                            text(ev.file + ":" + std::to_string(ev.line)) | color(Color::Cyan),
+                                            text(ev.note.empty() ? "" : "  (" + ev.note + ")") | (ev.verified ? dim : color(Color::Red))}));
+                        out.push_back(hbox({text("      "), paragraph(ev.quote) | dim | flex}));
+                    }
+                }
+                if (!f.fix.empty()) {
+                    out.push_back(text(""));
+                    out.push_back(text("What to do") | bold | color(Color::Cyan));
+                    for (size_t i = 0; i < f.fix.size(); ++i) {
+                        out.push_back(hbox({text("  " + std::to_string(i + 1) + ". ") | color(Color::Cyan), paragraph(f.fix[i]) | flex}));
+                    }
+                }
+                if (!f.confidence_note.empty()) {
+                    out.push_back(text(""));
+                    out.push_back(paragraph("Note: " + f.confidence_note + ".") | color(Color::Yellow));
+                }
+                out.push_back(text(""));
+                out.push_back(text(std::to_string(f.steps) + (f.steps == 1 ? " step · " : " steps · ") + std::to_string(f.files_read.size()) +
+                                   (f.files_read.size() == 1 ? " file read · " : " files read · ") +
+                                   thousands(static_cast<size_t>(f.input_tokens)) + " tokens in, " +
+                                   thousands(static_cast<size_t>(f.output_tokens)) + " out") | dim);
+                out.push_back(text("AI can be wrong. Evidence marked ✓ was checked against your files.") | dim);
+            }
+        }
+        // follow the newest steps while it's running; scroll freely once it's done
+        int total = static_cast<int>(out.size());
+        int max_scroll = std::max(0, total - std::max(1, height - 1));
+        if (!inv_->done) inv_scroll_ = max_scroll;
+        inv_scroll_ = std::min(inv_scroll_, max_scroll);
+        Elements visible(out.begin() + inv_scroll_, out.end());
+        return vbox(std::move(visible));
+    }
+
+    Element investigation_footer() {
+        auto key = [](const char* k, const char* what) {
+            return hbox({text(k) | bold | color(Color::Cyan), text(" " + std::string(what) + "  ") | dim});
+        };
+        if (inv_consent_) return hbox({text(" "), key("y", "send"), key("n", "cancel"), filler()});
+        if (inv_ && !inv_->done) return hbox({text(" "), key("Esc", "cancel"), filler()});
+        return hbox({text(" "), key("↑↓", "scroll"), key("Esc", "back to the log"), filler()});
+    }
+#else
+    void start_investigation(uint32_t) { message_ = "this culprit was built without AI"; }
+#endif
 };
 
 }  // namespace

@@ -12,6 +12,7 @@ culprit app.log
 docker compose logs -f | culprit
 kubectl logs -f deploy/api | culprit
 culprit analyze app.log        # print the likely root cause and what to do
+culprit investigate app.log    # optional: ask an AI to find the cause in your code
 ```
 
 ![culprit showing a Spring Boot log](docs/images/viewer.png)
@@ -92,6 +93,34 @@ examples = ['2026-10-28 10:00:00.000  WARN 1 --- [main] c.e.k.PaymentClient : pa
 `culprit rules --check` makes sure each rule recognises its examples. A rule with the id of one of culprit's
 replaces it, so you can point an explanation at your own runbook. See [Writing rules](docs/rules.md).
 
+## Asking an AI (optional)
+
+Rules explain known problems. For the rest, or to find *where in your code* it went wrong, culprit can hand
+the error to an AI and let it read your project: the code at the stack trace, a search for where a value
+comes from, the recent git changes to those files. It answers with the cause, the fix, and quotes from your
+files, and culprit checks every quote against the real file (`✓` or `✗`) before showing it.
+
+```bash
+culprit ai setup                   # once: choose the AI
+culprit investigate app.log        # investigate the likely root cause
+```
+
+In the viewer, select an error and press `i`.
+
+You choose the AI, and nothing is used until you do:
+
+- **A model on your computer with [Ollama](https://ollama.com)** (free, private; `qwen3:8b` runs on an 8 GB GPU)
+- **A free cloud service:** Groq, OpenRouter, Cerebras, Google Gemini
+- **Your own API key:** Anthropic (Claude), OpenAI, Mistral, DeepSeek
+- **Your company's server:** any OpenAI-compatible URL
+- **None**
+
+The AI can only read, only inside the project, and never files that may hold secrets (`.env`, keys,
+credentials, anything git ignores). Values like passwords are redacted in what it does read. Before anything
+is sent to a provider that isn't on your computer, culprit asks. It can be switched off per run (`--no-ai`),
+per machine (`CULPRIT_AI=off`), or for a whole project (`ai = false` in `.culprit/config.toml`).
+See [Investigating with AI](docs/ai.md).
+
 ## What it does
 
 - **Understands your logs without setup.** JSON from Spring Boot (ECS, Logstash, GELF), pino, zap, slog and
@@ -153,6 +182,7 @@ cmake --build build --config Release
 | `Enter` | open or close the details of an entry; `Tab` scrolls them |
 | `a` | the problems culprit found, and the likely root cause; `Enter` shows a problem's entries |
 | `p` / `P` | next / previous entry with a problem (marked `◆`) |
+| `i` | ask the AI to investigate the selected error (after `culprit ai setup`) |
 | `n` / `N` | next / previous error |
 | `w` / `W` | next / previous warning |
 | `/` | filter (`Enter` keeps it, `Esc` cancels) |
@@ -201,6 +231,16 @@ culprit analyze [options] [file...]
       --rules <path>     more rules
 
 culprit rules [--check] [id...]
+
+culprit investigate [options] [file...]
+      --line <n>         investigate the entry at this line (default: the likely root cause)
+      --problem <id>     ... or the first entry of this problem
+      --format <f>       text, markdown or json
+      --yes              don't ask before sending to a provider that isn't on this computer
+      --show-prompt      print what would be sent, and stop
+      --project <dir>    the project to read (default: the git repository you're in)
+
+culprit ai setup | status | on | off
 ```
 
 ## How it's built
@@ -217,6 +257,8 @@ src/core/      no terminal code; tested on its own
   rules        rule files: loading, checking, and matching every rule in one pass over each entry
   toml         a small reader for the part of TOML rule files use
   analyzer     problems, groups of repeated errors, and the likely root cause, kept up to date as lines arrive
+src/ai/        the investigator: providers (OpenAI-compatible and Anthropic), the read-only project tools and
+               their safety checks, the step loop, and checking the evidence
 src/tui/       the FTXUI viewer, the plain printer and the analyze report
 rules/         culprit's own rules, compiled into the program
 ```
@@ -233,6 +275,11 @@ rules/         culprit's own rules, compiled into the program
   resulting from them, with high, medium or low confidence. Times are compared across services only when the log
   says which time zone it uses; otherwise the order the lines arrived in decides.
 - **Every rule carries a real log line as an example,** and the tests check each rule recognises its own.
+- **No HTTP library is bundled.** culprit uses the system's own: libcurl on Linux and macOS (loaded only when
+  the AI is used) and WinHTTP on Windows, so it stays one small file and follows the system's proxy and
+  certificate settings.
+- **The AI's safety rules are enforced by culprit, not asked of the model.** Every path it requests is
+  resolved and checked before anything is read, and its answer is checked against the files after.
 - **Piped input and the keyboard both work:** culprit keeps a copy of the pipe and points stdin back at the
   terminal (`/dev/tty`, or `CONIN$` on Windows).
 
@@ -243,7 +290,9 @@ ctest --test-dir build --output-on-failure
 ```
 
 The sample logs in [`testdata/`](testdata) cover every supported format, plus an incident where a failed
-migration takes down an app behind nginx. The tests check what each one parses into (levels, loggers, threads,
+migration takes down an app behind nginx, and [`testdata/kedai`](testdata/kedai) is the small project behind it.
+The AI tests use a scripted model, and `tests/ai_e2e.sh` runs whole investigations over HTTP against a fake
+provider in both API formats, checking that secrets and files outside the project are never sent. The tests check what each one parses into (levels, loggers, threads,
 messages, fields, stack traces kept whole, the first frame in your code) and what the analysis finds. Every
 built-in rule is checked against its examples. CI builds and tests on Windows, Linux and macOS.
 
@@ -252,12 +301,11 @@ built-in rule is checked against its examples. CI builds and tests on Windows, L
 culprit is being built in three steps:
 
 1. **The viewer** (0.1): reading, following, filtering, and pointing at your code.
-2. **The analyser** (0.2, this release): rules that recognise common problems and say what to do, groups of
-   repeated errors, and the *first* failure behind a cascade of follow-on errors.
-3. **The investigator:** for errors no rule knows, an AI assistant (a local model through Ollama, or an API you
-   choose) that reads your project. It searches the code, reads the files in the stack trace, checks what
-   changed recently in Git, and explains the root cause with evidence that culprit verifies against the real
-   files. It will be read-only, kept inside your project folder, and will never read secrets.
+2. **The analyser** (0.2): rules that recognise common problems and say what to do, groups of repeated
+   errors, and the *first* failure behind a cascade of follow-on errors.
+3. **The investigator** (0.3, this release): an AI of your choice (Ollama on your computer, a free cloud
+   service, or your own API key) reads your project, read-only, and explains the root cause with evidence
+   that culprit checks against your files.
 
 ## License
 

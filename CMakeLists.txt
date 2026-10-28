@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(culprit VERSION 0.2.0 LANGUAGES CXX)
+project(culprit VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,6 +11,7 @@ endif()
 
 set(CULPRIT_VERSION "${PROJECT_VERSION}" CACHE STRING "Version string shown by --version")
 option(CULPRIT_BUILD_TESTS "Build the tests" ON)
+option(CULPRIT_AI "Build the AI investigator (culprit investigate, culprit ai)" ON)
 
 # One executable with nothing to install: static C++ runtime on Windows, static libstdc++ on Linux.
 if(MSVC)
@@ -61,9 +62,30 @@ add_library(culprit_core STATIC
 target_include_directories(culprit_core PUBLIC src)
 target_link_libraries(culprit_core PUBLIC Threads::Threads)
 
+# --- AI investigator: talks to Ollama or an AI API through the system's HTTP library ------------------
+if(CULPRIT_AI)
+  add_library(culprit_ai STATIC
+    src/ai/config.cpp
+    src/ai/http.cpp
+    src/ai/investigator.cpp
+    src/ai/json.cpp
+    src/ai/provider.cpp
+    src/ai/subject.cpp
+    src/ai/workspace.cpp)
+  target_link_libraries(culprit_ai PUBLIC culprit_core ${CMAKE_DL_LIBS})
+  if(WIN32)
+    target_link_libraries(culprit_ai PUBLIC winhttp)
+  endif()
+  target_compile_definitions(culprit_ai PUBLIC CULPRIT_WITH_AI)
+endif()
+
 # --- the culprit command ---------------------------------------------------------------------------------
-add_executable(culprit src/main.cpp src/tui/viewer.cpp src/tui/plain.cpp src/tui/report.cpp src/tui/style.cpp)
+add_executable(culprit src/main.cpp src/cli.cpp src/tui/viewer.cpp src/tui/plain.cpp src/tui/report.cpp src/tui/style.cpp)
 target_link_libraries(culprit PRIVATE culprit_core ftxui::screen ftxui::dom ftxui::component)
+if(CULPRIT_AI)
+  target_sources(culprit PRIVATE src/tui/finding.cpp src/cli_ai.cpp)
+  target_link_libraries(culprit PRIVATE culprit_ai)
+endif()
 target_compile_definitions(culprit PRIVATE CULPRIT_VERSION="${CULPRIT_VERSION}")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
   target_link_options(culprit PRIVATE -static-libstdc++ -static-libgcc)
@@ -84,6 +106,10 @@ if(CULPRIT_BUILD_TESTS)
     tests/rules_test.cpp
     tests/analyzer_test.cpp)
   target_link_libraries(culprit_tests PRIVATE culprit_core)
+  if(CULPRIT_AI)
+    target_sources(culprit_tests PRIVATE tests/ai_json_test.cpp tests/ai_workspace_test.cpp tests/ai_investigator_test.cpp)
+    target_link_libraries(culprit_tests PRIVATE culprit_ai)
+  endif()
   target_compile_definitions(culprit_tests PRIVATE CULPRIT_TESTDATA="${CMAKE_SOURCE_DIR}/testdata")
   add_test(NAME culprit_tests COMMAND culprit_tests)
 endif()

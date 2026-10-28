@@ -9,6 +9,7 @@ culprit app.log
 docker compose logs -f | culprit
 kubectl logs -f deploy/api | culprit
 culprit analyze app.log          # the likely root cause, and what to do
+culprit investigate app.log      # optional: an AI of your choice finds the cause in your code
 ```
 
 Or without installing: `npx culprit-cli app.log`

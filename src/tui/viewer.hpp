@@ -14,6 +14,7 @@ struct ViewerOptions {
     std::string initial_filter;
     std::shared_ptr<const RuleSet> rules;  // for recognising problems; none means no analysis
     std::string message;                   // shown in the status line at start (problems in rule files)
+    bool no_ai = false;                    // --no-ai
 };
 
 /// Runs until the user quits. Returns the process exit code.
