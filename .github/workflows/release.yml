@@ -1,0 +1,66 @@
+# Push a tag such as v0.1.0 to build culprit for Windows, Linux and macOS and publish a GitHub Release.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-24.04, target: linux-x64, exe: culprit }
+          - { os: windows-latest, target: windows-x64, exe: culprit.exe }
+          - { os: macos-latest, target: macos-universal, exe: culprit }
+    steps:
+      - uses: actions/checkout@v5
+      - name: Version from the tag
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Build
+        shell: bash
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCULPRIT_VERSION="$VERSION" \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          cmake --build build --config Release -j 4
+          ctest --test-dir build -C Release --output-on-failure
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          exe=$(find build -name '${{ matrix.exe }}' -type f | grep -v '\.dir' | head -1)
+          "$exe" --version
+          name=culprit-$VERSION-${{ matrix.target }}
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "$exe" dist/culprit.exe
+            (cd dist && 7z a "$name.zip" culprit.exe > /dev/null && rm culprit.exe)
+          else
+            cp "$exe" dist/culprit
+            tar -czf "dist/$name.tar.gz" -C dist culprit && rm dist/culprit
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

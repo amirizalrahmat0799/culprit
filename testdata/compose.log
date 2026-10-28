@@ -1,0 +1,8 @@
+db-1        | 2026-10-28 01:41:00.912 UTC [1] LOG:  database system is ready to accept connections
+backend-1   | 2026-10-28T09:41:05.019+08:00  INFO 1 --- [kedai] [           main] com.example.kedai.KedaiApplication       : Started KedaiApplication in 3.214 seconds
+frontend-1  | 172.18.0.1 - - [28/Oct/2026:01:44:17 +0000] "GET / HTTP/1.1" 200 612 "-" "Mozilla/5.0"
+backend-1   | 2026-10-28T09:46:51.377+08:00 ERROR 1 --- [kedai] [nio-8080-exec-7] c.e.kedai.order.OrderService             : Order 8812 failed
+backend-1   | java.lang.IllegalStateException: Order 8812 has no customer
+backend-1   | 	at com.example.kedai.order.OrderService.place(OrderService.java:52)
+backend-1   | 	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885)
+frontend-1  | 172.18.0.1 - - [28/Oct/2026:01:46:51 +0000] "POST /api/orders HTTP/1.1" 500 49 "-" "Mozilla/5.0"

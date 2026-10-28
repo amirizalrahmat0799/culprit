@@ -1,0 +1,12 @@
+2026-10-28 09:41:02,118 - uvicorn.error - INFO - Started server process [7]
+INFO:     127.0.0.1:52144 - "GET /api/todos HTTP/1.1" 200 OK
+2026-10-28 09:46:51,377 - app.api - ERROR - Creating todo failed
+Traceback (most recent call last):
+  File "/app/app/api.py", line 42, in create_todo
+    todo = store.create(title)
+  File "/app/app/database.py", line 88, in create
+    result = conn.execute(insert(todos_table).values(title=title))
+  File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 1418, in execute
+    return meth(self, distilled_parameters, execution_options)
+sqlalchemy.exc.OperationalError: (psycopg.OperationalError) connection is bad: no route to host
+WARNING:root:retrying in 2 seconds

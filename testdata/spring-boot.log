@@ -1,0 +1,41 @@
+2026-10-28T09:41:02.118+08:00  INFO 48211 --- [kedai] [           main] com.example.kedai.KedaiApplication       : Starting KedaiApplication v0.4.0 using Java 21.0.5 with PID 48211
+2026-10-28T09:41:02.121+08:00  INFO 48211 --- [kedai] [           main] com.example.kedai.KedaiApplication       : The following 1 profile is active: "prod"
+2026-10-28T09:41:03.402+08:00  INFO 48211 --- [kedai] [           main] o.s.b.w.e.tomcat.TomcatWebServer         : Tomcat initialized with port 8080 (http)
+2026-10-28T09:41:03.977+08:00  INFO 48211 --- [kedai] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Starting...
+2026-10-28T09:41:04.211+08:00  INFO 48211 --- [kedai] [           main] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Added connection org.postgresql.jdbc.PgConnection@6a1d3e2f
+2026-10-28T09:41:04.390+08:00  INFO 48211 --- [kedai] [           main] o.f.core.internal.command.DbMigrate      : Successfully applied 2 migrations to schema "public", now at version v4
+2026-10-28T09:41:05.004+08:00  INFO 48211 --- [kedai] [           main] o.s.b.w.e.tomcat.TomcatWebServer         : Tomcat started on port 8080 (http) with context path '/'
+2026-10-28T09:41:05.019+08:00  INFO 48211 --- [kedai] [           main] com.example.kedai.KedaiApplication       : Started KedaiApplication in 3.214 seconds (process running for 3.6)
+2026-10-28T09:44:17.552+08:00  INFO 48211 --- [kedai] [nio-8080-exec-1] c.e.kedai.order.OrderController          : POST /api/orders customer=301 items=3
+2026-10-28T09:44:17.601+08:00 DEBUG 48211 --- [kedai] [nio-8080-exec-1] c.e.kedai.order.OrderService             : Reserving stock for order 8811
+2026-10-28T09:44:17.688+08:00  INFO 48211 --- [kedai] [nio-8080-exec-1] c.e.kedai.order.OrderService             : Order 8811 placed, total RM 42.90
+2026-10-28T09:45:30.004+08:00  WARN 48211 --- [kedai] [nio-8080-exec-4] c.e.kedai.payment.PaymentClient          : Payment gateway slow: 2840 ms for order 8811 (limit 2000 ms)
+2026-10-28T09:46:51.320+08:00  INFO 48211 --- [kedai] [nio-8080-exec-7] c.e.kedai.order.OrderController          : POST /api/orders customer=512 items=1
+2026-10-28T09:46:51.377+08:00 ERROR 48211 --- [kedai] [nio-8080-exec-7] o.a.c.c.C.[.[.[/].[dispatcherServlet]    : Servlet.service() for servlet [dispatcherServlet] threw exception
+
+java.lang.NullPointerException: Cannot invoke "com.example.kedai.customer.Customer.getEmail()" because "customer" is null
+	at com.example.kedai.order.OrderService.sendConfirmation(OrderService.java:87)
+	at com.example.kedai.order.OrderService.place(OrderService.java:52)
+	at com.example.kedai.order.OrderController.create(OrderController.java:34)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.springframework.web.method.support.InvocableHandlerMethod.doInvoke(InvocableHandlerMethod.java:257)
+	at org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod.invokeAndHandle(ServletInvocableHandlerMethod.java:118)
+	at org.springframework.web.servlet.DispatcherServlet.doDispatch(DispatcherServlet.java:1088)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885)
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63)
+	at java.base/java.lang.Thread.run(Thread.java:1583)
+
+2026-10-28T09:47:12.880+08:00  INFO 48211 --- [kedai] [nio-8080-exec-2] c.e.kedai.order.OrderController          : GET /api/orders/8811
+2026-10-28T09:52:40.118+08:00  WARN 48211 --- [kedai] [nio-8080-exec-9] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Thread starvation or clock leap detected (housekeeper delta=1m2s).
+2026-10-28T09:52:41.773+08:00 ERROR 48211 --- [kedai] [nio-8080-exec-3] c.e.kedai.report.SalesReportService      : Daily sales report failed for 2026-10-27
+org.springframework.dao.DataAccessResourceFailureException: Unable to acquire JDBC Connection
+	at org.springframework.orm.jpa.vendor.HibernateJpaDialect.convertHibernateAccessException(HibernateJpaDialect.java:277)
+	at com.example.kedai.report.SalesReportRepository$$SpringCGLIB$$0.dailyTotals(<generated>)
+	at com.example.kedai.report.SalesReportService.build(SalesReportService.java:41)
+	at com.example.kedai.report.SalesReportJob.run(SalesReportJob.java:22)
+Caused by: java.sql.SQLTransientConnectionException: HikariPool-1 - Connection is not available, request timed out after 30005ms (total=10, active=10, idle=0, waiting=4)
+	at com.zaxxer.hikari.pool.HikariPool.createTimeoutException(HikariPool.java:686)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:179)
+	... 14 common frames omitted
+2026-10-28T09:53:05.442+08:00  INFO 48211 --- [kedai] [nio-8080-exec-5] c.e.kedai.order.OrderController          : GET /api/health

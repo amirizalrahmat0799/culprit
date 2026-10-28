@@ -1,0 +1,3 @@
+{"level":30,"time":1761615662118,"pid":7,"hostname":"api-7d9","msg":"server listening on :8080"}
+{"level":40,"time":1761615730004,"pid":7,"hostname":"api-7d9","req":{"method":"GET","url":"/api/todos"},"responseTime":1840,"msg":"slow request"}
+{"level":50,"time":1761615811377,"pid":7,"hostname":"api-7d9","err":{"type":"TypeError","message":"Cannot read properties of undefined (reading 'title')","stack":"TypeError: Cannot read properties of undefined (reading 'title')\n    at createTodo (/app/src/app.ts:31:27)\n    at Layer.handle [as handle_request] (/app/node_modules/express/lib/router/layer.js:95:5)\n    at next (/app/node_modules/express/lib/router/route.js:149:13)"},"msg":"request failed"}
