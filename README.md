@@ -1,6 +1,7 @@
 # culprit
 
 [![CI](https://github.com/amirizalrahmat0799/culprit/actions/workflows/ci.yml/badge.svg)](https://github.com/amirizalrahmat0799/culprit/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/culprit-cli?logo=npm)](https://www.npmjs.com/package/culprit-cli)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-blue)
 [![license](https://img.shields.io/github/license/amirizalrahmat0799/culprit)](LICENSE)
 
@@ -45,7 +46,7 @@ code** it happened, with the framework frames dimmed.
 
 ## Install
 
-**npm** (Windows, macOS, Linux x64 and arm64):
+**npm** ([culprit-cli](https://www.npmjs.com/package/culprit-cli), for Windows, macOS, and Linux x64 and arm64):
 
 ```bash
 npm install -g culprit-cli
