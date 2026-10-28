@@ -16,6 +16,7 @@ option(CULPRIT_BUILD_TESTS "Build the tests" ON)
 if(MSVC)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   add_compile_options(/W4 /permissive- /utf-8 /Zc:__cplusplus)
+  add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)  # getenv is fine here
 else()
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()

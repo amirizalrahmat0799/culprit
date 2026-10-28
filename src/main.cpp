@@ -22,6 +22,13 @@
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
+// without these, windows.h defines min and max as macros, which breaks std::min / std::max
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #define isatty _isatty
 #define fileno _fileno
