@@ -377,7 +377,10 @@ std::optional<std::string> Workspace::resolve(const std::string& path, std::stri
             if (!allowed(*rel, why)) return std::nullopt;
             return rel;
         }
-    } else if (!fs::path(p).is_absolute()) {
+    } else if (!fs::path(p).has_root_path()) {
+        // a relative path that climbs out of the project. (A path from another machine starts at a root:
+        // /app/src/a.ts from a Linux container isn't "absolute" on Windows, which wants a drive letter,
+        // but it's matched by its tail below just the same.)
         if (why) *why = path + " is outside the project";
         return std::nullopt;
     }
@@ -434,6 +437,8 @@ std::optional<std::vector<std::string>> Workspace::lines(const std::string& rel)
 }
 
 std::string Workspace::read_file(const std::string& path, int start, int end) {
+    // refused by name, whether or not it exists: the model learns nothing about which secrets there are
+    if (is_secret(path)) return "error: " + path + " may hold secrets, so culprit doesn't read it";
     std::string why;
     auto rel = resolve(path, &why);
     if (!rel) return "error: " + why;
