@@ -58,19 +58,29 @@ private:
 /// Case-insensitive substring search (ASCII case folding, UTF-8 safe).
 bool contains_icase(std::string_view haystack, std::string_view needle_lower);
 
-/// std::regex recurses about once per character it scans, so one long line (a 50 KB JSON message) can
-/// overflow the stack. Lines longer than this are searched in overlapping windows; a match longer than the
-/// overlap that crosses a window edge is missed, which is the price of not crashing.
-inline constexpr size_t kRegexWindow = 1000;
-inline constexpr size_t kRegexOverlap = 200;
+/// std::regex recurses about once per character it scans. With libstdc++ and libc++ one long line (a 50 KB
+/// JSON message) overflows the stack; MSVC instead throws regex_error past a depth of 600 on x64
+/// (_REGEX_MAX_STACK_COUNT). Lines longer than this are searched in overlapping windows; a match longer
+/// than the overlap that crosses a window edge is missed, which is the price of not crashing.
+inline constexpr size_t kRegexWindow = 500;
 
-/// Calls `f` with `line` itself, or with overlapping windows of it, until `f` returns true.
+/// Calls `f` with `line` itself, or with overlapping windows of it, until `f` returns true. When `f` throws
+/// regex_error (MSVC's depth or complexity limit), the window is searched again in smaller pieces.
 template <class F>
-bool regex_windows(std::string_view line, F&& f) {
-    if (line.size() <= kRegexWindow) return f(line);
-    for (size_t at = 0;; at += kRegexWindow - kRegexOverlap) {
-        if (f(line.substr(at, kRegexWindow))) return true;
-        if (at + kRegexWindow >= line.size()) return false;
+bool regex_windows(std::string_view line, F&& f, size_t window = kRegexWindow) {
+    auto attempt = [&](std::string_view w) -> bool {
+        try {
+            return f(w);
+        } catch (const std::regex_error&) {
+            if (window <= 64) return false;
+            return regex_windows(w, f, window / 2);
+        }
+    };
+    if (line.size() <= window) return attempt(line);
+    const size_t step = window - window / 5;
+    for (size_t at = 0;; at += step) {
+        if (attempt(line.substr(at, window))) return true;
+        if (at + window >= line.size()) return false;
     }
 }
 

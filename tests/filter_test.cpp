@@ -73,3 +73,19 @@ TEST("a regex on a very long line doesn't overflow the stack") {
     e.stack = std::string(5000, 'y') + "\n  at Foo.bar(Foo.java:1)";
     CHECK(m("/foo\\.bar/", e));
 }
+
+TEST("a regex that throws on one window is tried again on smaller pieces") {
+    // MSVC throws regex_error past its recursion limit; simulate it for windows longer than 100 characters
+    std::string line = std::string(3000, 'x') + " read timeout " + std::string(3000, 'y');
+    int calls = 0;
+    bool hit = regex_windows(line, [&](std::string_view w) {
+        ++calls;
+        if (w.size() > 100) throw std::regex_error(std::regex_constants::error_stack);
+        return w.find("timeout") != std::string_view::npos;
+    });
+    CHECK(hit);
+    CHECK(calls > 1);
+    CHECK(!regex_windows(std::string(2000, 'z'), [](std::string_view) -> bool {
+        throw std::regex_error(std::regex_constants::error_complexity);
+    }));
+}

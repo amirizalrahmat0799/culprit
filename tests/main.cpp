@@ -1,5 +1,7 @@
 #include <cstdlib>
 #include <ctime>
+#include <exception>
+#include <iostream>
 
 #include "check.hpp"
 
@@ -15,7 +17,15 @@ int main() {
     int run = 0;
     for (const auto& c : check::cases()) {
         int before = check::failures();
-        c.fn();
+        try {
+            c.fn();
+        } catch (const std::exception& e) {
+            ++check::failures();
+            std::cerr << "exception: " << e.what() << "\n";
+        } catch (...) {
+            ++check::failures();
+            std::cerr << "unknown exception\n";
+        }
         ++run;
         if (check::failures() != before) std::cerr << "  in test: " << c.name << "\n";
     }
