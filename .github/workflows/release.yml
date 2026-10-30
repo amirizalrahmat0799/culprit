@@ -1,7 +1,8 @@
 # Push a tag such as v0.1.0 to build culprit for Windows, Linux and macOS, publish a GitHub Release, and
 # publish it to npm (culprit-cli) and the Homebrew tap (amirizalrahmat0799/tap).
 #
-# npm:      trusted publishing (Settings on npmjs.com for each package), or an NPM_TOKEN secret.
+# npm:      trusted publishing (Settings on npmjs.com for each package) with staged publishing: the versions
+#           wait under Staged Packages on npmjs.com until you approve them with 2FA (culprit-cli last).
 # Homebrew: a HOMEBREW_TAP_TOKEN secret that can push to the homebrew-tap repository; skipped without it.
 name: Release
 
@@ -71,7 +72,7 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
 
   npm:
-    name: Publish to npm
+    name: Stage on npm
     needs: release
     runs-on: ubuntu-latest
     permissions:
@@ -87,11 +88,11 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+      - name: npm with staged publishing
+        run: npm install -g npm@latest
       - name: Build the packages
         run: node scripts/npm-packages.mjs "${GITHUB_REF_NAME#v}" dist npm-out
-      - name: Publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Stage on npm (approve on npmjs.com to make them public)
         run: bash scripts/npm-publish.sh npm-out
 
   homebrew:
