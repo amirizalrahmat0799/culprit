@@ -556,7 +556,82 @@ bool Parser::is_continuation(std::string_view text, const std::string& prefix_so
     return false;
 }
 
+namespace {
+
+bool has_control(std::string_view s) {
+    for (size_t i = 0; i < s.size(); ++i) {
+        const auto c = static_cast<unsigned char>(s[i]);
+        if ((c < 0x20 && c != '\t') || c == 0x7f) return true;
+        if (c == 0xc2 && i + 1 < s.size() && static_cast<unsigned char>(s[i + 1]) >= 0x80 &&
+            static_cast<unsigned char>(s[i + 1]) <= 0x9f) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void clean_in_place(std::string& s, bool keep_newlines) {
+    if (has_control(s)) s = strip_terminal_codes(s, keep_newlines);
+}
+
+}  // namespace
+
+std::string strip_terminal_codes(std::string_view s, bool keep_newlines) {
+    std::string out;
+    out.reserve(s.size());
+    size_t i = 0;
+    while (i < s.size()) {
+        const auto c = static_cast<unsigned char>(s[i]);
+        // C1 controls written as UTF-8 (U+0080-U+009F); U+009B is a CSI on some terminals
+        if (c == 0xc2 && i + 1 < s.size() && static_cast<unsigned char>(s[i + 1]) >= 0x80 &&
+            static_cast<unsigned char>(s[i + 1]) <= 0x9f) {
+            i += 2;
+            continue;
+        }
+        if (c != 0x1b) {
+            if ((c < 0x20 && c != '\t' && !(keep_newlines && c == '\n')) || c == 0x7f) {
+                ++i;
+                continue;
+            }
+            out += static_cast<char>(c);
+            ++i;
+            continue;
+        }
+        // ESC: work out how long the sequence is and skip it
+        ++i;
+        if (i >= s.size()) break;
+        const char kind = s[i++];
+        if (kind == '[') {
+            // CSI: parameters and intermediates, then one final byte in @..~
+            while (i < s.size() && !(s[i] >= '@' && s[i] <= '~')) ++i;
+            if (i < s.size()) ++i;
+        } else if (kind == ']' || kind == 'P' || kind == '_' || kind == '^' || kind == 'X') {
+            // OSC, DCS, APC, PM, SOS: a string ended by BEL or ESC backslash
+            while (i < s.size()) {
+                if (s[i] == '\a') {
+                    ++i;
+                    break;
+                }
+                if (s[i] == '\x1b' && i + 1 < s.size() && s[i + 1] == '\\') {
+                    i += 2;
+                    break;
+                }
+                ++i;
+            }
+        } else {
+            // two- or three-character sequences: ESC ( B, ESC =, ESC 7, ...
+            while (i < s.size() && s[i - 1] >= ' ' && s[i - 1] <= '/') ++i;
+        }
+    }
+    return out;
+}
+
 void Parser::feed(std::string_view raw_line, std::vector<Entry>& out) {
+    std::string cleaned;
+    if (has_control(raw_line)) {
+        cleaned = strip_terminal_codes(raw_line);
+        raw_line = cleaned;
+    }
     std::string_view line = raw_line;
     if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
     ++line_;
@@ -597,6 +672,17 @@ void Parser::flush(std::vector<Entry>& out) {
     if (!pending_) return;
     // a stack trace printed under a line with no level means something went wrong
     if (current_.level == Level::Unknown && !current_.stack.empty()) current_.level = Level::Error;
+    // JSON logs can carry escape codes inside strings ("\u001b[31m"), decoded only now
+    clean_in_place(current_.message, true);
+    clean_in_place(current_.stack, true);
+    clean_in_place(current_.logger, false);
+    clean_in_place(current_.thread, false);
+    clean_in_place(current_.source, false);
+    clean_in_place(current_.time_text, false);
+    for (auto& [k, v] : current_.fields) {
+        clean_in_place(k, false);
+        clean_in_place(v, true);
+    }
     while (!current_.stack.empty() && (current_.stack.back() == '\n' || current_.stack.back() == ' ')) current_.stack.pop_back();
     out.push_back(std::move(current_));
     current_ = Entry{};

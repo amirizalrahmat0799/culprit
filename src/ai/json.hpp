@@ -60,7 +60,13 @@ public:
     // doesn't need a check at every step.
     const std::string& str() const;
     double number() const { return type_ == Type::Number ? number_ : 0; }
-    int64_t integer() const { return type_ == Type::Number ? static_cast<int64_t>(number_) : 0; }
+    /// The number as an integer, rounded toward zero and clamped to int64 (0 for NaN and non-numbers).
+    int64_t integer() const {
+        if (type_ != Type::Number || number_ != number_) return 0;
+        if (number_ >= 9.2e18) return INT64_MAX;
+        if (number_ <= -9.2e18) return INT64_MIN;
+        return static_cast<int64_t>(number_);
+    }
     bool boolean() const { return type_ == Type::Bool && bool_; }
     const Array& items() const;
     const Object& members() const;

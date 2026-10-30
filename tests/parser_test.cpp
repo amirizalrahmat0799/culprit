@@ -185,3 +185,24 @@ TEST("every sample parses") {
         for (const auto& e : entries) CHECK_EQ(e.format, "json");
     }
 }
+
+TEST("colours and terminal codes are removed, and coloured levels are recognised") {
+    Entry e = parse_all("2026-10-28T09:41:05.019Z \x1b[31mERROR\x1b[0;39m 1 --- [main] \x1b[36mcom.x.App\x1b[0;39m : boom\n")[0];
+    CHECK(e.level == Level::Error);
+    CHECK_EQ(e.message, std::string("boom"));
+    CHECK(e.raw.find('\x1b') == std::string::npos);
+
+    // a title change, screen clear and clipboard write must not reach the terminal
+    auto t = parse_all("ERROR a \x1b]0;pwned\x07 b \x1b[2J c \x1b]52;c;aGk=\x1b\\ d \xc2\x9b" "31m e\x07\n")[0];
+    CHECK_EQ(t.message, std::string("a  b  c  d 31m e"));
+
+    // escapes inside JSON strings are decoded by the JSON reader, then removed
+    auto j = parse_all("{\"level\":\"error\",\"msg\":\"x \\u001b]0;t\\u0007 y\",\"user\":\"\\u001b[2Jz\"}\n")[0];
+    CHECK_EQ(j.message, std::string("x  y"));
+    CHECK_EQ(*j.field("user"), std::string("z"));
+
+    CHECK_EQ(strip_terminal_codes("a\tb\nc\x7f" "d"), std::string("a\tbcd"));
+    CHECK_EQ(strip_terminal_codes("a\nb", true), std::string("a\nb"));
+    CHECK_EQ(strip_terminal_codes("\x1b(Bx\x1b=y\x1b"), std::string("xy"));
+    CHECK_EQ(strip_terminal_codes("caf\xc3\xa9"), std::string("caf\xc3\xa9"));
+}

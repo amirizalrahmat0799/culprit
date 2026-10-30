@@ -52,10 +52,12 @@ std::string arg_string(const Json& args, const char* key) {
 
 int arg_int(const Json& args, const char* key, int fallback) {
     const Json& v = args[key];
-    if (v.is_number()) return static_cast<int>(v.integer());
+    // numbers from the model: clamp to a range that line arithmetic (line - 1 - d) can't overflow
+    auto clamp = [](int64_t n) { return static_cast<int>(std::clamp<int64_t>(n, -1000000000, 1000000000)); };
+    if (v.is_number()) return clamp(v.integer());
     if (v.is_string() && !v.str().empty()) {
         try {
-            return std::stoi(v.str());
+            return clamp(std::stoll(v.str()));
         } catch (...) {
         }
     }

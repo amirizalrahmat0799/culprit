@@ -18,6 +18,7 @@ int to_int(std::string_view s) {
     int v = 0;
     for (char c : s) {
         if (c < '0' || c > '9') break;
+        if (v > 99999999) return 0;  // no real line number is this long; 0 means unknown
         v = v * 10 + (c - '0');
     }
     return v;

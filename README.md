@@ -225,7 +225,8 @@ culprit [options] [file...]
 
 culprit analyze [options] [file...]
       --format <f>       text, markdown or json
-      --fail-on <s>      exit with 1 on a problem at least this severe: critical, error, warning (default: never)
+      --fail-on <s>      exit with 1 on a problem at least this severe: critical, error, warning (default: never);
+                         a file that can't be read exits with 2
   -F, --filter <query>   analyse only matching entries, e.g. "source=api"
       --top <n>          how many groups of unrecognised errors to list
       --rules <path>     more rules

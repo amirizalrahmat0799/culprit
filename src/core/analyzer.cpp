@@ -83,8 +83,12 @@ std::string normalize_message(std::string_view m) {
             if (digit && (all_digits || (!word && tok.size() >= 6) || tok.size() >= 20)) {
                 out += '#';
             } else if (digit) {
-                // words with numbers in them (pod-7d9f8, order42): keep letters, mask digits
-                for (char ch : tok) out += is_digit(ch) ? '#' : ch;
+                // words with numbers in them (pod-7d9f8, order42, 350ms): keep letters, one # per run of
+                // digits, so "82ms" and "3454ms" are the same error
+                for (size_t k = 0; k < tok.size(); ++k) {
+                    if (!is_digit(tok[k])) out += tok[k];
+                    else if (k == 0 || !is_digit(tok[k - 1])) out += '#';
+                }
             } else {
                 out.append(tok);
             }

@@ -36,3 +36,9 @@ TEST("ai json: bad input is rejected, bad UTF-8 is replaced on output") {
     CHECK_EQ(Json(std::string("ok \xff\xfe end")).dump(), std::string("\"ok \\ufffd\\ufffd end\""));
     CHECK_EQ(Json(std::string("tab\tnul\x01")).dump(), std::string("\"tab\\tnul\\u0001\""));
 }
+
+TEST("ai json: huge and odd numbers become clamped integers") {
+    CHECK_EQ(Json::parse("1e30")->integer(), INT64_MAX);
+    CHECK_EQ(Json::parse("-1e30")->integer(), INT64_MIN);
+    CHECK_EQ(Json::parse("42.9")->integer(), 42);
+}

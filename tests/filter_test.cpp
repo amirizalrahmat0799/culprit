@@ -64,3 +64,12 @@ TEST("highlights") {
     auto f = Filter::parse("Payment -noise \"order failed\" orderId=88");
     CHECK_EQ(f.highlights().size(), 3u);
 }
+
+TEST("a regex on a very long line doesn't overflow the stack") {
+    // std::regex recurses per character; one 200 KB line used to crash culprit
+    Entry e = make(Level::Error, std::string(200000, 'x') + " read timeout");
+    CHECK(m("/.*timeout/", e));
+    CHECK(!m("/.*nothing/", e));
+    e.stack = std::string(5000, 'y') + "\n  at Foo.bar(Foo.java:1)";
+    CHECK(m("/foo\\.bar/", e));
+}

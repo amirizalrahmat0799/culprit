@@ -135,6 +135,11 @@ void Reader::read_file(const Input& input) {
 
     while (!stopping_) {
         if (!file.is_open()) {
+            std::error_code dir_ec;
+            if (fs::is_directory(fs::path(input.path), dir_ec)) {
+                error(input.path + " is a folder; give the log files in it");
+                return;
+            }
             file.open(fs::path(input.path), std::ios::binary);
             if (!file) {
                 if (!warned) error("can't open " + input.path);

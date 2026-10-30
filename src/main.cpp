@@ -92,7 +92,7 @@ errors no rule knows, grouped.
 Options:
       --format <f>       text (default), markdown (for a pull request or chat), or json
       --fail-on <s>      exit with 1 when there's a problem at least this severe: critical, error,
-                         warning; or never (default). For CI.
+                         warning; or never (default). For CI. A file that can't be read exits with 2.
   -F, --filter <query>   analyse only the entries that match, e.g. "source=api"
       --top <n>          how many groups of unrecognised errors to list (default 10)
       --rules <path>     more rules: a .toml file or a folder of them (can be repeated)
@@ -199,11 +199,13 @@ int run_analyze(int argc, char** argv) {
     culprit::Analyzer analyzer(rules);
     uint32_t index = 0;
     std::vector<culprit::Entry> kept;  // only for --investigate
-    read_all(in, [&](culprit::Entry& e) {
+    const bool read_ok = read_all(in, [&](culprit::Entry& e) {
         if (!f.matches(e)) return;
         analyzer.add(e, index++);
         if (investigate) kept.push_back(std::move(e));
     });
+    // an unreadable input must not pass for a clean log (a typo in CI would otherwise say "No problems found")
+    if (!read_ok && index == 0) return 2;
     culprit::Report report = analyzer.report();
 
     options.color = color && options.format == culprit::ReportFormat::Text;
@@ -231,6 +233,7 @@ int run_analyze(int argc, char** argv) {
 #endif
     }
 
+    if (!read_ok) return 2;
     if (fail_level >= 0) {
         for (const auto& p : report.problems) {
             if (static_cast<int>(p.rule->severity) >= fail_level) return 1;
@@ -408,7 +411,7 @@ int main(int argc, char** argv) {
         bool sources_seen = false;
         std::string first_source;
         uint32_t index = 0;
-        read_all(in, [&](culprit::Entry& e) {
+        const bool read_ok = read_all(in, [&](culprit::Entry& e) {
             analyzer.add(e, index++);
             if (!e.source.empty()) {
                 if (first_source.empty()) first_source = e.source;
@@ -418,7 +421,7 @@ int main(int argc, char** argv) {
             if (f.matches(e)) culprit::print_plain(stdout, e, options);
             std::fflush(stdout);
         });
-        return 0;
+        return read_ok ? 0 : 2;
     }
 
     if (reads_stdin && !stdin_is_terminal()) {

@@ -469,11 +469,13 @@ int run_investigate(int argc, char** argv) {
     Inputs in = make_inputs(files);
     std::vector<Entry> entries;
     Analyzer analyzer(rules);
-    read_all(in, [&](Entry& e) {
-        if (!f.matches(e)) return;
-        analyzer.add(e, static_cast<uint32_t>(entries.size()));
-        entries.push_back(std::move(e));
-    });
+    if (!read_all(in, [&](Entry& e) {
+            if (!f.matches(e)) return;
+            analyzer.add(e, static_cast<uint32_t>(entries.size()));
+            entries.push_back(std::move(e));
+        })) {
+        return 2;
+    }
     Report report = analyzer.report();
 
     std::optional<uint32_t> target;

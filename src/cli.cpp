@@ -130,17 +130,22 @@ Inputs make_inputs(std::vector<std::string> files) {
     return in;
 }
 
-void read_all(const Inputs& in, const std::function<void(Entry&)>& each) {
+bool read_all(const Inputs& in, const std::function<void(Entry&)>& each) {
     Reader reader(in.list, false);
     reader.start(nullptr);
+    bool ok = true;
     while (true) {
         bool done = reader.finished();
-        for (auto& err : reader.take_errors()) std::fprintf(stderr, "culprit: %s\n", err.c_str());
+        for (auto& err : reader.take_errors()) {
+            std::fprintf(stderr, "culprit: %s\n", err.c_str());
+            ok = false;
+        }
         for (auto& e : reader.take()) each(e);
         if (done) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     reader.stop();
+    return ok;
 }
 
 }  // namespace culprit::cli

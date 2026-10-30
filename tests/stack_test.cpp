@@ -50,3 +50,9 @@ TEST("Python, Node and Go frames") {
     auto g = first_own_frame(go);
     CHECK(g && g->file == "/app/postgres.go" && g->line == 118 && g->function == "main.(*PostgresStore).SetDone");
 }
+
+TEST("absurd line numbers are treated as unknown") {
+    auto f = parse_stack("java.lang.IllegalStateException: x\n\tat com.example.A.b(A.java:99999999999)\n\tat com.example.A.c(A.java:12)");
+    CHECK_EQ(f[1].line, 0);
+    CHECK_EQ(f[2].line, 12);
+}

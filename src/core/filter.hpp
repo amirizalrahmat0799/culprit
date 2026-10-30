@@ -58,4 +58,23 @@ private:
 /// Case-insensitive substring search (ASCII case folding, UTF-8 safe).
 bool contains_icase(std::string_view haystack, std::string_view needle_lower);
 
+/// std::regex recurses about once per character it scans, so one long line (a 50 KB JSON message) can
+/// overflow the stack. Lines longer than this are searched in overlapping windows; a match longer than the
+/// overlap that crosses a window edge is missed, which is the price of not crashing.
+inline constexpr size_t kRegexWindow = 1000;
+inline constexpr size_t kRegexOverlap = 200;
+
+/// Calls `f` with `line` itself, or with overlapping windows of it, until `f` returns true.
+template <class F>
+bool regex_windows(std::string_view line, F&& f) {
+    if (line.size() <= kRegexWindow) return f(line);
+    for (size_t at = 0;; at += kRegexWindow - kRegexOverlap) {
+        if (f(line.substr(at, kRegexWindow))) return true;
+        if (at + kRegexWindow >= line.size()) return false;
+    }
+}
+
+/// Whether `re` matches any line of `text` (searched line by line and in windows, see kRegexWindow).
+bool regex_search_lines(std::string_view text, const std::regex& re);
+
 }  // namespace culprit

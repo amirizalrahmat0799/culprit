@@ -122,7 +122,7 @@ Rule build_rule(const toml::Table& t, bool& disabled) {
     if (const auto* v = t.get("symptom")) r.symptom = as_bool(*v, "symptom");
     if (const auto* v = t.get("priority")) {
         if (v->type != toml::Value::Type::Integer) throw RuleError{v->line, "priority must be a whole number"};
-        r.priority = static_cast<int>(v->integer);
+        r.priority = static_cast<int>(std::clamp<int64_t>(v->integer, -1000000, 1000000));
     }
     if (const auto* v = t.get("tags")) r.tags = as_strings(*v, "tags");
 
@@ -252,12 +252,17 @@ bool regex_lines(const Rule& r, std::string_view text, Captures& captures, std::
         size_t nl = text.find('\n', start);
         std::string_view line = text.substr(start, nl == std::string_view::npos ? std::string_view::npos : nl - start);
         start = nl == std::string_view::npos ? text.size() : nl + 1;
-        if (line.size() > 4000) line = line.substr(0, 4000);  // std::regex recurses; keep it bounded
         bool candidate = std::any_of(r.contains.begin(), r.contains.end(),
                                      [&](const std::string& w) { return contains_icase(line, w); });
         if (!candidate) continue;
         std::match_results<std::string_view::const_iterator> m;
-        if (std::regex_search(line.begin(), line.end(), m, *r.regex)) {
+        // std::regex recurses; long lines are searched in windows (see kRegexWindow)
+        const bool hit = regex_windows(line, [&](std::string_view w) {
+            if (!std::regex_search(w.begin(), w.end(), m, *r.regex)) return false;
+            line = w;
+            return true;
+        });
+        if (hit) {
             const size_t offset = static_cast<size_t>(without_prefix(line).data() - line.data());
             const size_t at = static_cast<size_t>(m.position(0));
             evidence = around(without_prefix(line), at >= offset ? at - offset : 0);

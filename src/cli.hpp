@@ -38,7 +38,8 @@ struct Inputs {
 };
 /// No files means stdin.
 Inputs make_inputs(std::vector<std::string> files);
-/// Reads every input to the end, calling `each` for every entry in order.
-void read_all(const Inputs& in, const std::function<void(Entry&)>& each);
+/// Reads every input to the end, calling `each` for every entry in order. Problems are printed to stderr;
+/// returns false when an input couldn't be read (a missing file, a folder).
+bool read_all(const Inputs& in, const std::function<void(Entry&)>& each);
 
 }  // namespace culprit::cli

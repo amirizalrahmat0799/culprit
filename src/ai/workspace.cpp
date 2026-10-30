@@ -450,8 +450,13 @@ std::string Workspace::read_file(const std::string& path, int start, int end) {
     const bool config = config_like(*rel);
     int total = static_cast<int>(ls.size());
     if (start < 1) start = 1;
-    if (end < start) end = start + kMaxReadLines - 1;
-    if (end - start + 1 > kMaxReadLines) end = start + kMaxReadLines - 1;
+    if (total == 0) return *rel + " is empty";
+    if (start > total) {
+        return "error: " + *rel + " has " + std::to_string(total) + (total == 1 ? " line" : " lines") +
+               "; ask for start_line 1 to " + std::to_string(total);
+    }
+    // the model picks these numbers, so no arithmetic on them may overflow: start <= total here
+    if (end < start || end - start >= kMaxReadLines) end = start + kMaxReadLines - 1;
     if (end > total) end = total;
     if (std::find(files_read_.begin(), files_read_.end(), *rel) == files_read_.end()) files_read_.push_back(*rel);
     std::string out = *rel + " (lines " + std::to_string(start) + "-" + std::to_string(end) + " of " + std::to_string(total) + ")\n";

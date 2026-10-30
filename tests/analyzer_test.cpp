@@ -105,3 +105,9 @@ TEST("analyzer: the same unrecognised error is grouped") {
     CHECK(r.root && r.root->kind == RootCause::Kind::Group && r.root->confidence == RootCause::Confidence::Medium);
     CHECK_EQ(a.problem_count(), 2u);
 }
+
+TEST("numbers with units group together whatever their length") {
+    CHECK_EQ(normalize_message("failed after 82ms"), normalize_message("failed after 3454ms"));
+    CHECK_EQ(normalize_message("upload of 3MB rejected"), normalize_message("upload of 120MB rejected"));
+    CHECK_EQ(normalize_message("failed after 82ms"), std::string("failed after #ms"));
+}

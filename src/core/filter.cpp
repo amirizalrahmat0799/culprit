@@ -183,8 +183,8 @@ bool Filter::match_term(const Term& t, const Entry& e) const {
             return false;
         }
         case Kind::Regex:
-            return std::regex_search(e.message, *t.regex) || std::regex_search(e.stack, *t.regex) ||
-                   std::regex_search(e.logger, *t.regex);
+            return regex_search_lines(e.message, *t.regex) || regex_search_lines(e.stack, *t.regex) ||
+                   regex_search_lines(e.logger, *t.regex);
         case Kind::Field: {
             const std::string* value = nullptr;
             if (t.key == "logger") value = &e.logger;
@@ -221,6 +221,19 @@ bool Filter::matches(const Entry& e) const {
         if (match_term(t, e) == t.negate) return false;
     }
     return true;
+}
+
+bool regex_search_lines(std::string_view text, const std::regex& re) {
+    size_t start = 0;
+    while (start < text.size()) {
+        size_t nl = text.find('\n', start);
+        std::string_view line = text.substr(start, nl == std::string_view::npos ? std::string_view::npos : nl - start);
+        start = nl == std::string_view::npos ? text.size() : nl + 1;
+        if (regex_windows(line, [&](std::string_view w) { return std::regex_search(w.begin(), w.end(), re); })) {
+            return true;
+        }
+    }
+    return false;
 }
 
 }  // namespace culprit

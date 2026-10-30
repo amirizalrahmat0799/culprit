@@ -49,4 +49,9 @@ private:
 /// Parses a single line on its own (no multi-line handling). Exposed for tests.
 Entry parse_line(std::string_view line);
 
+/// Removes terminal escape sequences (colours, titles, cursor moves) and other control characters, keeping
+/// tabs and, when `keep_newlines`, newlines. Log text is printed to the terminal, so it must not be able to
+/// drive it; and coloured output ("\x1b[31mERROR\x1b[0m") must still be recognised.
+std::string strip_terminal_codes(std::string_view text, bool keep_newlines = false);
+
 }  // namespace culprit

@@ -1,5 +1,6 @@
 #include "core/toml.hpp"
 
+#include <cstdint>
 #include <cstdio>
 
 namespace culprit::toml {
@@ -159,7 +160,10 @@ private:
             if (!(peek() >= '0' && peek() <= '9')) fail("expected a number");
             int64_t n = 0;
             while ((peek() >= '0' && peek() <= '9') || peek() == '_') {
-                if (peek() != '_') n = n * 10 + (peek() - '0');
+                if (peek() != '_') {
+                    if (n > (INT64_MAX - (peek() - '0')) / 10) fail("the number is too big");
+                    n = n * 10 + (peek() - '0');
+                }
                 ++pos_;
             }
             if (peek() == '.' || peek() == 'e' || peek() == 'E' || peek() == '-' || peek() == ':') {

@@ -53,5 +53,8 @@ TEST("toml: mistakes are reported with their line") {
     CHECK(!toml::parse("a = 1.5\n", err));
     CHECK(!toml::parse("a.b = 1\n", err));
     CHECK(!toml::parse("a = [1, 2\n", err));
+    CHECK(!toml::parse("a = 99999999999999999999\n", err));
+    CHECK(err.message.find("too big") != std::string::npos);
+    CHECK(toml::parse("a = 9223372036854775807\n", err));
     CHECK(!toml::parse("a = 1 b\n", err));
 }

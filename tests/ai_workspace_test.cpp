@@ -134,3 +134,15 @@ TEST("ai workspace: git history shows uncommitted changes") {
     CHECK(h.find("first") != std::string::npos);
     fs::remove_all(root);
 }
+
+TEST("ai workspace: line numbers past the end or near the int limit") {
+    fs::path root = make_project();
+    Workspace ws(root.string());
+    std::string r = ws.read_file("OrderService.java", 2147483647, 0);
+    CHECK(r.find("has 7 lines") != std::string::npos);
+    CHECK(ws.read_file("OrderService.java", 50, 60).find("has 7 lines") != std::string::npos);
+    std::string all = ws.read_file("OrderService.java", 1, 2147483647);
+    CHECK(all.find("(lines 1-7 of 7)") != std::string::npos);
+    CHECK(ws.read_file("OrderService.java", -2147483647, -2147483647).find("1: package") != std::string::npos);
+    fs::remove_all(root);
+}
