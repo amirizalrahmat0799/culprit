@@ -364,8 +364,10 @@ std::string js_strings(const std::vector<std::string>& v) {
     return s + "]";
 }
 
-void json_report(std::FILE* out, const Report& r, const ReportOptions& o) {
-    std::string s = "{\"title\":" + js(o.title) + ",\"entries\":" + std::to_string(r.entries) + ",\"errors\":" +
+}  // namespace
+
+std::string report_json(const Report& r, const std::string& title) {
+    std::string s = "{\"title\":" + js(title) + ",\"entries\":" + std::to_string(r.entries) + ",\"errors\":" +
                     std::to_string(r.errors) + ",\"warnings\":" + std::to_string(r.warnings);
     s += ",\"root_cause\":";
     if (r.root) {
@@ -406,8 +408,16 @@ void json_report(std::FILE* out, const Report& r, const ReportOptions& o) {
              ",\"first\":" + js_occurrence(g.first) + ",\"last\":" + js_occurrence(g.last) + ",\"sources\":" + js_strings(g.sources) +
              ",\"in_your_code\":" + js_frame(g.where) + "}";
     }
-    s += "]}\n";
-    std::fputs(s.c_str(), out);
+    s += "]}";
+    return s;
+}
+
+std::string json_string(std::string_view s) { return js(s); }
+
+namespace {
+
+void json_report(std::FILE* out, const Report& r, const ReportOptions& o) {
+    std::fprintf(out, "%s\n", report_json(r, o.title).c_str());
 }
 
 }  // namespace

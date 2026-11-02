@@ -131,7 +131,9 @@ void markdown(std::FILE* out, const ai::Finding& f, const ai::Subject& s) {
     std::fprintf(out, "_%s. AI can be wrong; evidence marked ✓ was checked against the files._\n", stats(f).c_str());
 }
 
-void json(std::FILE* out, const ai::Finding& f, const ai::Subject& s) {
+}  // namespace
+
+ai::Json finding_json(const ai::Finding& f, const ai::Subject& s) {
     using ai::Json;
     Json ev = Json::array();
     for (const auto& e : f.evidence) {
@@ -159,8 +161,12 @@ void json(std::FILE* out, const ai::Finding& f, const ai::Subject& s) {
                            {"provider", f.provider},
                            {"model", f.model},
                            {"local", f.local}});
-    std::fprintf(out, "%s\n", j.dump().c_str());
+    return j;
 }
+
+namespace {
+
+void json(std::FILE* out, const ai::Finding& f, const ai::Subject& s) { std::fprintf(out, "%s\n", finding_json(f, s).dump().c_str()); }
 
 }  // namespace
 

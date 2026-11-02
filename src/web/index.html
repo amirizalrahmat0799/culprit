@@ -1,0 +1,790 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<link rel="icon" href="data:,">
+<title>culprit</title>
+<style>
+:root {
+  --bg: #ffffff; --bg2: #f6f7f9; --bg3: #eceef2; --fg: #1d2129; --dim: #6b7280; --line: #e3e6eb;
+  --accent: #2563eb; --accent-bg: #e8effd; --sel: #dbe6fb; --hover: #f1f4f9;
+  --err: #c81e1e; --err-bg: #fdecec; --warn: #a16207; --warn-bg: #fdf6e3; --info: #0e7490; --ok: #15803d; --ok-bg: #e9f7ee;
+  --debug: #7c3aed; --mark: #fde68a; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif; color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a; --bg2: #1b1e23; --bg3: #23272e; --fg: #e4e6ea; --dim: #9097a3; --line: #2c3139;
+    --accent: #6ea0ff; --accent-bg: #1c2a44; --sel: #233452; --hover: #1f2329;
+    --err: #ff7b72; --err-bg: #3a1d1d; --warn: #e3b341; --warn-bg: #352b14; --info: #56c2d6; --ok: #56d364; --ok-bg: #16301e;
+    --debug: #b392f0; --mark: #6b5310; color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 13px/1.45 var(--sans); display: flex; flex-direction: column; overflow: hidden; }
+button { font: inherit; color: inherit; background: var(--bg2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+button:hover:not(:disabled) { background: var(--bg3); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
+button.link { background: none; border: none; padding: 0; color: var(--accent); }
+button.link:hover { text-decoration: underline; background: none; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+code, pre, .mono { font-family: var(--mono); font-size: 12px; }
+pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+mark { background: var(--mark); color: inherit; border-radius: 2px; }
+
+header { display: flex; align-items: center; gap: 14px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--bg2); flex-wrap: wrap; }
+header .brand { font-weight: 700; letter-spacing: .2px; }
+header .title { color: var(--dim); max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); }
+.live .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+.live.on .dot { background: var(--ok); box-shadow: 0 0 0 0 var(--ok); animation: pulse 2s infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(86,211,100,.5); } 70% { box-shadow: 0 0 0 6px rgba(86,211,100,0); } 100% { box-shadow: 0 0 0 0 rgba(86,211,100,0); } }
+.counts { display: flex; gap: 12px; margin-left: auto; color: var(--dim); }
+.counts b { color: var(--fg); font-weight: 600; }
+.counts .e b { color: var(--err); } .counts .w b { color: var(--warn); }
+
+.bar { display: flex; gap: 8px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.bar input { flex: 1 1 320px; min-width: 200px; font: 13px var(--mono); padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+.bar input.bad { border-color: var(--err); }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { border-radius: 999px; padding: 3px 10px; font-size: 12px; }
+.chip.on { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+.bar .hint { color: var(--err); font-size: 12px; flex-basis: 100%; }
+.bar .hint:empty { display: none; }
+.matches { color: var(--dim); font-size: 12px; white-space: nowrap; }
+
+.banner { padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--warn-bg); color: var(--warn); }
+.banner.err { background: var(--err-bg); color: var(--err); }
+.banner:empty { display: none; }
+
+main { flex: 1; display: flex; min-height: 0; }
+#list { flex: 1 1 60%; overflow: auto; position: relative; outline: none; min-width: 0; }
+#spacer { position: relative; }
+.row { position: absolute; left: 0; right: 0; height: 24px; display: flex; align-items: center; gap: 10px; padding: 0 14px; cursor: pointer; white-space: nowrap; font-family: var(--mono); font-size: 12px; border-bottom: 1px solid transparent; }
+.row:hover { background: var(--hover); }
+.row.sel { background: var(--sel); }
+.row .t { color: var(--dim); flex: 0 0 auto; min-width: 92px; }
+.row .s { color: var(--info); flex: 0 0 auto; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+.row .g { color: var(--dim); flex: 0 0 auto; max-width: 170px; overflow: hidden; text-overflow: ellipsis; }
+.row .m { flex: 1; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.row .k { color: var(--dim); flex: 0 0 auto; }
+.row.ph .m { color: var(--dim); }
+.lv { display: inline-block; flex: 0 0 auto; width: 48px; text-align: center; font: 600 10px/16px var(--sans); border-radius: 4px; letter-spacing: .3px; color: var(--dim); background: var(--bg3); }
+.lv.ERROR, .lv.FATAL { color: #fff; background: var(--err); }
+.lv.WARN { color: #1d1300; background: var(--warn); }
+.lv.INFO { color: var(--info); background: transparent; border: 1px solid var(--line); }
+.lv.DEBUG, .lv.TRACE { color: var(--debug); background: transparent; }
+.badge { display: inline-block; font: 600 10px/16px var(--sans); padding: 0 6px; border-radius: 4px; background: var(--accent-bg); color: var(--accent); flex: 0 0 auto; }
+.badge.critical, .badge.error, .badge.low { background: var(--err-bg); color: var(--err); }
+.badge.warning, .badge.medium { background: var(--warn-bg); color: var(--warn); }
+.badge.info { background: var(--bg3); color: var(--dim); }
+.badge.high, .badge.ok { background: var(--ok-bg); color: var(--ok); }
+.empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--dim); padding: 20px; text-align: center; }
+
+aside { flex: 0 0 42%; max-width: 640px; min-width: 340px; border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+.tabs { display: flex; border-bottom: 1px solid var(--line); padding: 0 8px; background: var(--bg2); }
+.tabs button { border: none; background: none; border-radius: 0; padding: 9px 12px; color: var(--dim); border-bottom: 2px solid transparent; }
+.tabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
+.tabs .n { margin-left: 4px; font-size: 11px; color: var(--err); }
+.pane { flex: 1; overflow: auto; padding: 14px; display: none; }
+.pane.on { display: block; }
+.card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; background: var(--bg); }
+.card.root { border-color: var(--err); box-shadow: inset 3px 0 0 var(--err); }
+.card h3 { margin: 0 0 6px; font-size: 14px; }
+.meta { color: var(--dim); font-size: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 6px; }
+.card p { margin: 6px 0; }
+.card ol { margin: 6px 0; padding-left: 20px; }
+.actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.sec { font-size: 11px; font-weight: 700; color: var(--dim); text-transform: uppercase; letter-spacing: .6px; margin: 16px 0 8px; }
+.item { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; }
+.item .top { display: flex; gap: 8px; align-items: baseline; }
+.item .top .ttl { flex: 1; font-weight: 600; word-break: break-word; }
+.item .cnt { color: var(--dim); font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+.item .sub { color: var(--dim); font-size: 12px; margin-top: 2px; word-break: break-word; }
+.item details { margin-top: 6px; }
+.item summary { cursor: pointer; color: var(--accent); font-size: 12px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; font-size: 12px; }
+.kv .k { color: var(--dim); font-family: var(--mono); }
+.kv .v { font-family: var(--mono); word-break: break-word; }
+.frames { font-family: var(--mono); font-size: 12px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; overflow-x: auto; }
+.frames div { white-space: pre; color: var(--dim); }
+.frames .own { color: var(--fg); font-weight: 600; }
+.frames .own::before { content: "› "; color: var(--accent); }
+.frames .header { color: var(--fg); }
+.frames .caused { color: var(--err); }
+.actions + .card { margin-top: 12px; }
+.msg { background: var(--bg2); border-radius: 8px; padding: 10px; margin: 8px 0; }
+.steps { font-size: 12px; margin: 8px 0; }
+.steps div { padding: 2px 0; word-break: break-word; }
+.steps .tool::before { content: "▸ "; color: var(--accent); }
+.steps .thinking { color: var(--dim); font-style: italic; }
+.steps .note { color: var(--dim); padding-left: 14px; font-family: var(--mono); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.steps .warning { color: var(--warn); }
+.steps .warning::before { content: "! "; }
+.ev { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 6px 0; }
+.ev .where { font-family: var(--mono); font-size: 12px; display: flex; gap: 6px; align-items: center; }
+.ev .yes { color: var(--ok); font-weight: 700; } .ev .no { color: var(--err); font-weight: 700; }
+.ev pre { margin-top: 6px; background: var(--bg2); padding: 6px 8px; border-radius: 6px; }
+.ev .note { color: var(--dim); font-size: 12px; }
+.spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.muted { color: var(--dim); }
+.small { font-size: 12px; }
+dialog { border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--fg); max-width: 520px; padding: 18px; }
+dialog::backdrop { background: rgba(0,0,0,.45); }
+dialog h3 { margin-top: 0; }
+dialog ul { padding-left: 18px; }
+.keys { color: var(--dim); font-size: 11px; padding: 6px 14px; border-top: 1px solid var(--line); background: var(--bg2); }
+.keys kbd { font-family: var(--mono); background: var(--bg3); border-radius: 3px; padding: 0 4px; border: 1px solid var(--line); }
+
+@media (max-width: 900px) {
+  main { flex-direction: column; }
+  #list { flex: 1 1 55%; }
+  aside { flex: 1 1 45%; max-width: none; min-width: 0; border-left: none; border-top: 1px solid var(--line); }
+  .row .g { display: none; }
+  .counts { margin-left: 0; }
+  .keys { display: none; }
+}
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">culprit</span>
+  <span class="title" id="title"></span>
+  <span class="live" id="live"><span class="dot"></span><span id="liveText">connecting…</span></span>
+  <span class="counts">
+    <span><b id="cTotal">0</b> entries</span>
+    <span class="e"><b id="cErr">0</b> errors</span>
+    <span class="w"><b id="cWarn">0</b> warnings</span>
+  </span>
+</header>
+<div class="bar">
+  <input id="filter" type="text" spellcheck="false" autocomplete="off"
+         placeholder='Filter: payment   level>=warn   -health   "order failed"   /time(d)? out/   has:stack   problem:hikari'
+         aria-label="Filter">
+  <div class="chips" id="chips"></div>
+  <span class="matches" id="matches"></span>
+  <button id="follow" title="Keep the newest entries in view (End)">Follow</button>
+  <div class="hint" id="filterError"></div>
+</div>
+<div class="banner" id="banner"></div>
+<main>
+  <section id="list" tabindex="0" aria-label="Log entries"><div id="spacer"></div><div class="empty" id="empty">Waiting for log lines…</div></section>
+  <aside>
+    <nav class="tabs">
+      <button data-tab="analysis" class="on">Analysis<span class="n" id="nProblems"></span></button>
+      <button data-tab="entry">Entry</button>
+      <button data-tab="ai">AI</button>
+    </nav>
+    <div class="pane on" id="pane-analysis"><p class="muted">Analysing…</p></div>
+    <div class="pane" id="pane-entry"><p class="muted">Choose an entry to see it in full: fields, stack trace, and what culprit knows about it.</p></div>
+    <div class="pane" id="pane-ai"></div>
+  </aside>
+</main>
+<div class="keys"><kbd>/</kbd> filter · <kbd>↑</kbd><kbd>↓</kbd> or <kbd>j</kbd><kbd>k</kbd> move · <kbd>n</kbd><kbd>N</kbd> next/previous error · <kbd>g</kbd><kbd>G</kbd> top/bottom · <kbd>a</kbd> analysis · <kbd>i</kbd> investigate</div>
+
+<dialog id="consent">
+  <h3>Send this to <span id="cHost"></span>?</h3>
+  <p>The investigation uses <b id="cName"></b>, which isn't on this computer. It sends:</p>
+  <ul>
+    <li>the error, its stack trace and the <span id="cLines"></span> log lines before it, and a summary of the log (<span id="cChars"></span> characters)</li>
+    <li>the names of the project's files, and the files the AI chooses to read</li>
+  </ul>
+  <p class="muted small">Files that may hold secrets are never read, and values like passwords are redacted.</p>
+  <div class="actions" style="display:flex;gap:8px;justify-content:flex-end">
+    <button id="cNo">Cancel</button>
+    <button id="cYes" class="primary">Send</button>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+(() => {
+  const ROW = 24;
+  const params = new URLSearchParams(location.search);
+  const token = params.get("t") || "";
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n) => Number(n).toLocaleString("en-US");
+
+  // ---- tiny DOM helper: text is always set as text, never parsed as HTML -------------------------------
+  function h(tag, attrs, ...kids) {
+    const el = document.createElement(tag);
+    if (attrs) for (const [k, v] of Object.entries(attrs)) {
+      if (v === undefined || v === null || v === false) continue;
+      if (k === "class") el.className = v;
+      else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+      else el.setAttribute(k, v === true ? "" : v);
+    }
+    for (const kid of kids.flat(Infinity)) {
+      if (kid === undefined || kid === null || kid === false) continue;
+      el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+    }
+    return el;
+  }
+
+  function highlight(text, terms) {
+    if (!terms.length || !text) return document.createTextNode(text || "");
+    const frag = document.createDocumentFragment();
+    const lower = text.toLowerCase();
+    let i = 0;
+    while (i < text.length) {
+      let best = -1, len = 0;
+      for (const t of terms) {
+        if (!t) continue;
+        const at = lower.indexOf(t, i);
+        if (at >= 0 && (best < 0 || at < best)) { best = at; len = t.length; }
+      }
+      if (best < 0) { frag.append(text.slice(i)); break; }
+      if (best > i) frag.append(text.slice(i, best));
+      frag.append(h("mark", null, text.slice(best, best + len)));
+      i = best + len;
+    }
+    return frag;
+  }
+
+  // ---- talking to culprit -----------------------------------------------------------------------------
+  class Stopped extends Error {}
+  async function api(path, body) {
+    const opts = { headers: { "X-Culprit-Token": token }, cache: "no-store" };
+    if (body !== undefined) {
+      opts.method = "POST";
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(body);
+    }
+    let res;
+    try { res = await fetch(path, opts); } catch (e) { throw new Stopped("culprit isn't running"); }
+    const data = await res.json().catch(() => ({ error: res.statusText }));
+    data._status = res.status;
+    return data;
+  }
+
+  // ---- state --------------------------------------------------------------------------------------------
+  const S = {
+    status: null, seq: 0,
+    filter: "", matchVersion: 0, all: true, ids: [], count: 0, scanned: 0, highlights: [],
+    rows: new Map(), pending: new Set(), fetching: false,
+    selected: -1,        // entry index
+    follow: true, tab: "analysis",
+    report: null, reportSeq: -1, reportLoading: false,
+    inv: null, invKey: "",
+  };
+
+  // ---- header and status --------------------------------------------------------------------------------
+  function onStatus(st) {
+    const first = !S.status;
+    S.status = st; S.seq = st.seq;
+    $("title").textContent = st.title;
+    document.title = "culprit · " + st.title;
+    $("live").classList.toggle("on", st.following);
+    $("liveText").textContent = st.following ? "live" : "read to the end";
+    $("cTotal").textContent = fmt(st.total);
+    $("cErr").textContent = fmt(st.levels.error + st.levels.fatal);
+    $("cWarn").textContent = fmt(st.levels.warn);
+    $("nProblems").textContent = st.problems ? String(st.problems) : "";
+    const banner = $("banner");
+    banner.textContent = st.errors.length ? st.errors.join(" · ") : "";
+    banner.className = "banner" + (st.errors.length ? " err" : "");
+    if (first) {
+      if (st.filter) { $("filter").value = st.filter; S.filter = st.filter; }
+      updateChips();
+      refreshMatches(true);
+      renderAi();
+    } else if (st.total > S.scanned) {
+      refreshMatches(false);
+    }
+    if (S.tab === "analysis") loadReport();
+    const key = st.investigation ? st.investigation.state + ":" + st.investigation.steps : "";
+    if (key !== S.invKey) { S.invKey = key; loadInvestigation(); }
+    else if (S.tab === "ai" && !S.inv) renderAi();
+    if (S.status.total === 0) $("empty").textContent = st.following ? "Waiting for log lines…" : "No log lines.";
+  }
+
+  async function poll() {
+    let since = null;
+    for (;;) {
+      try {
+        const st = await api("/api/status" + (since === null ? "" : "?since=" + since));
+        if (st._status !== 200) throw new Stopped(st.error || "refused");
+        since = st.seq;
+        onStatus(st);
+      } catch (e) {
+        $("live").classList.remove("on");
+        $("liveText").textContent = "disconnected";
+        const b = $("banner");
+        b.className = "banner err";
+        b.textContent = "culprit has stopped. Start culprit web again and open the new address.";
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+    }
+  }
+
+  // ---- filter and matches ---------------------------------------------------------------------------
+  const CHIPS = [["Errors", "level>=error"], ["Warnings+", "level>=warn"], ["Stack traces", "has:stack"], ["Recognised", "has:problem"]];
+  function updateChips() {
+    const box = $("chips");
+    box.replaceChildren(...CHIPS.map(([label, q]) => {
+      const on = S.filter.split(/\s+/).includes(q);
+      return h("button", { class: "chip" + (on ? " on" : ""), title: q, onclick: () => toggleTerm(q) }, label);
+    }));
+  }
+  function toggleTerm(term) {
+    let parts = S.filter.split(/\s+/).filter(Boolean);
+    const isLevel = term.startsWith("level");
+    if (parts.includes(term)) parts = parts.filter((p) => p !== term);
+    else { if (isLevel) parts = parts.filter((p) => !p.startsWith("level")); parts.push(term); }
+    setFilter(parts.join(" "));
+  }
+  function setFilter(q) {
+    $("filter").value = q;
+    applyFilter(q);
+  }
+  let filterTimer = 0;
+  function applyFilter(q) {
+    clearTimeout(filterTimer);
+    if (q === S.filter) return;
+    S.filter = q;
+    updateChips();
+    refreshMatches(true);
+  }
+
+  async function refreshMatches(reset) {
+    const version = reset ? ++S.matchVersion : S.matchVersion;
+    const from = reset ? 0 : S.scanned;
+    if (!reset && S.matching) { S.matchAgain = true; return; }
+    S.matching = true;
+    let m;
+    try { m = await api("/api/match?filter=" + encodeURIComponent(S.filter) + "&from=" + from); }
+    catch (e) { S.matching = false; return; }
+    S.matching = false;
+    if (version !== S.matchVersion) return refreshMatches(true);
+    if (m.error) {
+      // keep showing what the last good filter matched
+      $("filter").classList.add("bad");
+      $("filterError").textContent = m.error;
+      return;
+    } else {
+      $("filter").classList.remove("bad");
+      $("filterError").textContent = "";
+    }
+    const list = $("list");
+    const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - ROW * 2;
+    if (reset || from === 0) { S.ids = []; S.all = !!m.all; S.highlights = m.highlights || []; }
+    if (m.all) { S.all = true; S.count = m.to; }
+    else if (!m.error) { S.all = false; for (const id of m.ids) S.ids.push(id); S.count = S.ids.length; }
+    S.scanned = m.to;
+    $("matches").textContent = S.filter ? fmt(S.count) + " of " + fmt(m.to) : "";
+    layout();
+    if (reset) {
+      const pos = S.selected >= 0 ? indexOfEntry(S.selected) : -1;
+      if (pos >= 0) scrollToRow(pos, true);
+      else if (S.follow) scrollToBottom();
+      else list.scrollTop = 0;
+    } else if (S.follow && (atBottom || S.count <= rowsInView())) {
+      scrollToBottom();
+    }
+    render();
+    if (S.matchAgain) { S.matchAgain = false; refreshMatches(false); }
+  }
+
+  const idAt = (k) => (S.all ? k : S.ids[k]);
+  function indexOfEntry(i) {
+    if (S.all) return i < S.count ? i : -1;
+    let lo = 0, hi = S.ids.length - 1;
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (S.ids[mid] === i) return mid; if (S.ids[mid] < i) lo = mid + 1; else hi = mid - 1; }
+    return -1;
+  }
+
+  // ---- the list (only the rows in view exist) ----------------------------------------------------------
+  const rowsInView = () => Math.ceil($("list").clientHeight / ROW);
+  function layout() {
+    $("spacer").style.height = S.count * ROW + "px";
+    const empty = $("empty");
+    if (S.count) empty.style.display = "none";
+    else {
+      empty.style.display = "";
+      if (S.status && S.status.total) empty.textContent = S.filter ? "Nothing matches this filter." : "No log lines.";
+    }
+  }
+  function scrollToBottom() { const l = $("list"); l.scrollTop = l.scrollHeight; }
+  function scrollToRow(k, center) {
+    const l = $("list"), top = k * ROW;
+    if (center) l.scrollTop = Math.max(0, top - l.clientHeight / 2);
+    else if (top < l.scrollTop) l.scrollTop = top;
+    else if (top + ROW > l.scrollTop + l.clientHeight) l.scrollTop = top + ROW - l.clientHeight;
+  }
+
+  let renderQueued = false;
+  function render() {
+    if (renderQueued) return;
+    renderQueued = true;
+    requestAnimationFrame(() => { renderQueued = false; draw(); });
+  }
+  function draw() {
+    const list = $("list"), spacer = $("spacer");
+    const first = Math.max(0, Math.floor(list.scrollTop / ROW) - 8);
+    const last = Math.min(S.count, first + rowsInView() + 16);
+    const multi = S.status && S.status.multiple_sources;
+    const kids = [];
+    const missing = [];
+    for (let k = first; k < last; k++) {
+      const id = idAt(k);
+      const r = S.rows.get(id);
+      if (!r) missing.push(id);
+      kids.push(rowEl(k, id, r, multi));
+    }
+    spacer.replaceChildren(...kids);
+    if (missing.length) fetchRows(missing);
+  }
+  function shortLogger(g) {
+    if (!g) return "";
+    const parts = g.split(".");
+    return parts.length > 1 ? parts[parts.length - 1] : g;
+  }
+  function rowEl(k, id, r, multi) {
+    const sel = id === S.selected;
+    const el = h("div", { class: "row" + (sel ? " sel" : "") + (r ? "" : " ph"), style: "top:" + k * ROW + "px", "data-i": id });
+    if (!r) { el.append(h("span", { class: "m" }, "…")); return el; }
+    el.append(h("span", { class: "t" }, r.t || ""));
+    el.append(h("span", { class: "lv " + r.l }, r.l === "-" ? "" : r.l));
+    if (multi && r.s) el.append(h("span", { class: "s", title: r.s }, r.s));
+    if (r.g) el.append(h("span", { class: "g", title: r.g }, shortLogger(r.g)));
+    el.append(h("span", { class: "m", title: r.m }, highlight(r.m, S.highlights)));
+    if (r.k) el.append(h("span", { class: "k", title: "has a stack trace" }, "⋯"));
+    if (r.r) el.append(h("span", { class: "badge " + r.rs, title: "recognised: " + r.r }, r.r));
+    return el;
+  }
+  async function fetchRows(ids) {
+    for (const id of ids) S.pending.add(id);
+    if (S.fetching) return;
+    S.fetching = true;
+    try {
+      while (S.pending.size) {
+        const batch = [...S.pending].slice(0, 400);
+        batch.forEach((id) => S.pending.delete(id));
+        const rows = await api("/api/rows?ids=" + batch.join(","));
+        if (!Array.isArray(rows)) break;
+        if (S.rows.size > 60000) S.rows.clear();
+        for (const r of rows) S.rows.set(r.i, r);
+        render();
+      }
+    } catch (e) { /* the status poll reports it */ }
+    S.fetching = false;
+  }
+
+  // ---- selection and the entry pane ----------------------------------------------------------------------
+  function select(i, opts = {}) {
+    S.selected = i;
+    const k = indexOfEntry(i);
+    if (k >= 0) scrollToRow(k, !!opts.center);
+    if (k >= 0 && k < S.count - 1) setFollow(false);
+    render();
+    showEntry(i);
+    if (opts.tab !== false) showTab("entry");
+  }
+  async function showEntry(i) {
+    const pane = $("pane-entry");
+    const e = await api("/api/entry?i=" + i);
+    if (e.error) { pane.replaceChildren(h("p", { class: "muted" }, e.error)); return; }
+    if (S.selected !== i) return;
+    const parts = [];
+    const meta = h("div", { class: "meta" },
+      h("span", { class: "lv " + e.level }, e.level === "-" ? "—" : e.level),
+      e.time && h("span", { class: "mono" }, e.time),
+      e.source && h("span", null, e.source),
+      h("span", null, "line " + fmt(e.line)),
+      e.format && h("span", { class: "muted" }, e.format));
+    parts.push(meta);
+    if (e.logger || e.thread) {
+      parts.push(h("div", { class: "kv" },
+        e.logger && [h("span", { class: "k" }, "logger"), h("span", { class: "v" }, e.logger)],
+        e.thread && [h("span", { class: "k" }, "thread"), h("span", { class: "v" }, e.thread)]));
+    }
+    parts.push(h("pre", { class: "msg" }, highlight(e.message, S.highlights)));
+    const actions = h("div", { class: "actions" });
+    if (aiUsable()) actions.append(h("button", { class: "primary", onclick: () => investigate(i) }, "Investigate with AI"));
+    if (e.group !== null && e.group !== undefined) actions.append(h("button", { onclick: () => setFilter("group:" + e.group) }, "Same error elsewhere"));
+    if (e.problem) actions.append(h("button", { onclick: () => setFilter("problem:" + e.problem.rule) }, "All like this"));
+    if (actions.childNodes.length) parts.push(actions);
+    if (e.problem) parts.push(problemCard(e.problem, false));
+    if (e.fields.length) {
+      parts.push(h("div", { class: "sec" }, "Fields"));
+      parts.push(h("div", { class: "kv" }, e.fields.map(([k, v]) => [h("span", { class: "k" }, k), h("span", { class: "v" }, v)])));
+    }
+    if (e.stack) {
+      parts.push(h("div", { class: "sec" }, "Stack trace"));
+      if (e.frames.length) {
+        parts.push(h("div", { class: "frames" }, e.frames.map((f) =>
+          h("div", { class: f.own ? "own" : f.kind === "caused" || f.kind === "header" ? f.kind : "" }, f.text))));
+      } else {
+        parts.push(h("pre", { class: "frames" }, e.stack));
+      }
+    }
+    parts.push(h("details", { style: "margin-top:12px" }, h("summary", { class: "muted small" }, "As written in the log"),
+      h("pre", { class: "msg" }, e.raw)));
+    pane.replaceChildren(...parts);
+    pane.scrollTop = 0;
+  }
+  function problemCard(p, root) {
+    return h("div", { class: "card" + (root ? " root" : "") },
+      h("div", { class: "meta" }, h("span", { class: "badge " + p.severity }, p.severity), p.symptom && h("span", null, "usually a symptom of something else"),
+        h("span", { class: "mono" }, p.rule)),
+      h("h3", null, p.title),
+      p.explain && h("p", null, p.explain),
+      p.fix && p.fix.length && [h("div", { class: "sec" }, "What to do"), h("ol", null, p.fix.map((f) => h("li", null, f)))],
+      // rule files can come with a project you cloned: link only to web pages, never javascript: or data:
+      p.docs && /^https?:\/\//i.test(p.docs) && h("p", { class: "small" }, "More: ", h("a", { href: p.docs, target: "_blank", rel: "noopener noreferrer" }, p.docs)));
+  }
+
+  // ---- tabs ----------------------------------------------------------------------------------------------------
+  function showTab(name) {
+    S.tab = name;
+    for (const b of document.querySelectorAll(".tabs button")) b.classList.toggle("on", b.dataset.tab === name);
+    for (const p of document.querySelectorAll(".pane")) p.classList.toggle("on", p.id === "pane-" + name);
+    if (name === "analysis") loadReport();
+    if (name === "ai") renderAi();
+  }
+  for (const b of document.querySelectorAll(".tabs button")) b.addEventListener("click", () => showTab(b.dataset.tab));
+
+  // ---- analysis --------------------------------------------------------------------------------------------
+  let reportTimer = 0;
+  function loadReport() {
+    if (!S.status || S.reportSeq === S.status.seq || S.reportLoading) return;
+    // a busy log changes every moment; refresh the analysis at most every 1.5 s
+    clearTimeout(reportTimer);
+    reportTimer = setTimeout(async () => {
+      S.reportLoading = true;
+      const seq = S.status.seq;
+      try { S.report = await api("/api/report"); S.reportSeq = seq; renderReport(); } catch (e) {}
+      S.reportLoading = false;
+      if (S.status.seq !== S.reportSeq && S.tab === "analysis") loadReport();
+    }, S.report ? 1500 : 0);
+  }
+  function when(o) { return [o.time, o.line ? "line " + fmt(o.line) : "", o.source].filter(Boolean).join(" · "); }
+  function jump(o) { return h("button", { class: "link", onclick: () => select(o.index, { center: true, tab: false }) }, when(o)); }
+  function renderReport() {
+    const r = S.report, pane = $("pane-analysis");
+    const scroll = pane.scrollTop;
+    const parts = [h("p", { class: "muted small", style: "margin-top:0" },
+      fmt(r.entries) + " entries · " + fmt(r.errors) + " errors · " + fmt(r.warnings) + " warnings")];
+    if (r.root_cause) {
+      const rc = r.root_cause;
+      const isProblem = rc.kind === "problem";
+      const item = isProblem ? r.problems[rc.index] : r.groups[rc.index];
+      const followers = rc.followers ? "Then " + fmt(rc.followers) + " error" + (rc.followers === 1 ? "" : "s") + " followed" +
+        (rc.followers_top.length ? ": " + rc.followers_top.map((f) => f.title + " ×" + fmt(f.count)).join(", ") : "") : "";
+      parts.push(h("div", { class: "sec" }, "Likely root cause"));
+      parts.push(h("div", { class: "card root" },
+        h("div", { class: "meta" }, h("span", { class: "badge " + rc.confidence }, rc.confidence + " confidence"),
+          isProblem && h("span", { class: "badge " + item.severity }, item.severity), jump(item.first),
+          item.count > 1 && h("span", null, "×" + fmt(item.count))),
+        h("h3", null, item.title),
+        !isProblem && item.exception && item.exception !== item.title && h("pre", { class: "small" }, item.exception),
+        isProblem && item.explain && h("p", null, item.explain),
+        isProblem && item.fix.length && [h("div", { class: "sec" }, "What to do"), h("ol", null, item.fix.map((f) => h("li", null, f)))],
+        item.in_your_code && h("p", { class: "small" }, "In your code: ", h("code", null, item.in_your_code.file + ":" + item.in_your_code.line)),
+        followers && h("p", { class: "small" }, followers),
+        h("p", { class: "muted small" }, "Why this one: " + rc.why),
+        h("div", { class: "actions" },
+          aiUsable() && h("button", { class: "primary", onclick: () => investigate(item.first.index) }, "Investigate with AI"),
+          h("button", { onclick: () => setFilter(isProblem ? "problem:" + item.rule : "group:" + item.id) }, "Show its entries"))));
+    }
+    const problems = r.problems.filter((p, i) => !(r.root_cause && r.root_cause.kind === "problem" && r.root_cause.index === i));
+    if (problems.length) {
+      parts.push(h("div", { class: "sec" }, "Known problems (" + problems.length + ")"));
+      for (const p of problems) parts.push(h("div", { class: "item" },
+        h("div", { class: "top" }, h("span", { class: "badge " + p.severity }, p.severity), h("span", { class: "ttl" }, p.title), h("span", { class: "cnt" }, "×" + fmt(p.count))),
+        h("div", { class: "sub" }, "first ", jump(p.first), p.symptom ? " · usually a symptom" : ""),
+        h("details", null, h("summary", null, "What it means and what to do"),
+          h("p", null, p.explain), p.fix.length && h("ol", null, p.fix.map((f) => h("li", null, f))),
+          h("div", { class: "actions" },
+            h("button", { onclick: () => setFilter("problem:" + p.rule) }, "Show its entries"),
+            aiUsable() && h("button", { onclick: () => investigate(p.first.index) }, "Investigate")))));
+    }
+    const groups = r.groups.filter((g, i) => !(r.root_cause && r.root_cause.kind === "group" && r.root_cause.index === i));
+    if (groups.length) {
+      parts.push(h("div", { class: "sec" }, "Errors no rule knows (" + groups.length + ")"));
+      for (const g of groups.slice(0, 50)) parts.push(h("div", { class: "item" },
+        h("div", { class: "top" }, h("span", { class: "lv " + g.level }, g.level), h("span", { class: "ttl" }, g.title), h("span", { class: "cnt" }, "×" + fmt(g.count))),
+        g.exception && g.exception !== g.title && h("div", { class: "sub mono" }, g.exception),
+        h("div", { class: "sub" }, "first ", jump(g.first), g.in_your_code ? " · " + g.in_your_code.file + ":" + g.in_your_code.line : ""),
+        h("div", { class: "actions" },
+          h("button", { onclick: () => setFilter("group:" + g.id) }, "Show its entries"),
+          aiUsable() && h("button", { onclick: () => investigate(g.first.index) }, "Investigate"))));
+      if (groups.length > 50) parts.push(h("p", { class: "muted small" }, "…and " + (groups.length - 50) + " more."));
+    }
+    if (!r.root_cause && !problems.length && !groups.length) {
+      parts.push(h("div", { class: "card" }, h("h3", null, "No problems found so far"),
+        h("p", { class: "muted" }, S.status && S.status.following ? "culprit keeps watching; errors appear here as they happen." : "No errors or warnings in this log.")));
+    }
+    pane.replaceChildren(...parts);
+    pane.scrollTop = scroll;
+  }
+
+  // ---- AI -------------------------------------------------------------------------------------------------
+  const aiUsable = () => !!(S.status && S.status.ai && S.status.ai.available);
+  async function loadInvestigation() {
+    try { S.inv = await api("/api/investigation"); } catch (e) { return; }
+    if (S.inv.state === "none") S.inv = null;
+    renderAi();
+  }
+  async function investigate(index, confirm) {
+    showTab("ai");
+    const body = { confirm: !!confirm };
+    if (index !== undefined && index !== null) body.index = index;
+    const res = await api("/api/investigate", body);
+    if (res._status === 428 && res.needs_confirm) return askConsent(res, index);
+    if (res.error) { aiMessage = res.error; renderAi(); return; }
+    aiMessage = "";
+    loadInvestigation();
+  }
+  let aiMessage = "";
+  function askConsent(info, index) {
+    $("cHost").textContent = info.host;
+    $("cName").textContent = info.name + (info.model ? " · " + info.model : "");
+    $("cLines").textContent = String(info.lines_before);
+    $("cChars").textContent = fmt(info.chars);
+    const d = $("consent");
+    $("cYes").onclick = () => { d.close(); investigate(index, true); };
+    $("cNo").onclick = () => d.close();
+    d.showModal();
+    $("cNo").focus();
+  }
+  function renderAi() {
+    const pane = $("pane-ai");
+    const st = S.status;
+    if (!st) return;
+    const ai = st.ai;
+    const parts = [];
+    if (!ai.available) {
+      parts.push(h("div", { class: "card" }, h("h3", null, "AI investigation is off"),
+        h("p", null, ai.reason || "Set it up with culprit ai setup."),
+        h("p", { class: "muted small" }, "With it on, culprit asks an AI (Ollama on this computer, a free cloud service, Claude or OpenAI) to read your code and find why an error happened, with evidence culprit checks against the files.")));
+      pane.replaceChildren(...parts);
+      return;
+    }
+    const inv = S.inv;
+    const running = inv && inv.state === "running";
+    parts.push(h("p", { class: "muted small", style: "margin-top:0" }, "Uses " + ai.name + (ai.model ? " · " + ai.model : "") +
+      (ai.local ? " (on this computer)" : " · sends to " + ai.host)));
+    parts.push(h("div", { class: "actions", style: "display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap" },
+      h("button", { class: "primary", disabled: running, onclick: () => investigate() }, "Investigate the likely root cause"),
+      S.selected >= 0 && h("button", { disabled: running, onclick: () => investigate(S.selected) }, "Investigate the selected entry")));
+    if (aiMessage) parts.push(h("div", { class: "card" }, h("p", { style: "margin:0" }, aiMessage)));
+    if (inv) parts.push(investigationCard(inv));
+    pane.replaceChildren(...parts);
+  }
+  function investigationCard(inv) {
+    const running = inv.state === "running";
+    const f = inv.finding;
+    const card = h("div", { class: "card" },
+      h("div", { class: "meta" },
+        running ? h("span", null, h("span", { class: "spin" }), " ", inv.cancelling ? "cancelling…" : "working… " + inv.seconds + " s")
+          : h("span", { class: "badge " + (inv.state === "done" ? "ok" : "error") }, inv.state),
+        h("button", { class: "link", onclick: () => select(inv.index, { center: true, tab: false }) }, inv.where || "the entry")),
+      h("h3", null, inv.title));
+    if (running) card.append(h("div", { class: "actions" }, h("button", { onclick: cancelInvestigation, disabled: inv.cancelling }, "Cancel")));
+    if (inv.steps.length) {
+      const steps = h("div", { class: "steps" }, inv.steps.map((s) => h("div", { class: s.kind }, s.text)));
+      card.append(f ? h("details", null, h("summary", { class: "muted small" }, inv.steps.length + " steps"), steps) : steps);
+    }
+    if (f) card.append(findingEl(f));
+    return card;
+  }
+  function findingEl(f) {
+    if (!f.ok) return h("p", { style: "color:var(--err)" }, "The investigation stopped: " + (f.error || "no answer"));
+    return h("div", null,
+      h("div", { class: "sec" }, "Finding"),
+      h("div", { class: "meta" }, h("span", { class: "badge " + f.confidence }, f.confidence + " confidence"), f.confidence_note && h("span", null, f.confidence_note)),
+      h("h3", null, f.summary),
+      f.explanation && f.explanation !== f.summary && h("pre", { style: "font-family:var(--sans);font-size:13px" }, f.explanation),
+      f.evidence.length && [h("div", { class: "sec" }, "Evidence"), f.evidence.map((e) => h("div", { class: "ev" },
+        h("div", { class: "where" }, h("span", { class: e.verified ? "yes" : "no", title: e.verified ? "checked against the file" : "not found in the file" }, e.verified ? "✓" : "✗"),
+          h("span", null, e.file + (e.line ? ":" + e.line : ""))),
+        e.note && h("div", { class: "note" }, e.note),
+        e.quote && h("pre", null, e.quote)))],
+      f.fix.length && [h("div", { class: "sec" }, "What to do"), h("ol", null, f.fix.map((x) => h("li", null, x)))],
+      h("p", { class: "muted small" }, [f.steps + (f.steps === 1 ? " step" : " steps"), f.files_read.length + (f.files_read.length === 1 ? " file read" : " files read"),
+        f.input_tokens || f.output_tokens ? fmt(f.input_tokens + f.output_tokens) + " tokens" : "", f.provider + (f.model ? " · " + f.model : "")]
+        .filter(Boolean).join(" · ") + ". AI can be wrong; evidence marked ✓ was checked against the files."));
+  }
+  async function cancelInvestigation() { await api("/api/investigation/cancel", {}); loadInvestigation(); }
+
+  // ---- input -------------------------------------------------------------------------------------------
+  function setFollow(on) {
+    S.follow = on;
+    $("follow").classList.toggle("chip", false);
+    $("follow").classList.toggle("primary", on);
+  }
+  $("follow").addEventListener("click", () => { setFollow(!S.follow); if (S.follow) scrollToBottom(); });
+  const list = $("list");
+  let lastTop = 0;
+  list.addEventListener("scroll", () => {
+    const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - ROW;
+    if (list.scrollTop < lastTop - 2 && !atBottom) setFollow(false);
+    else if (atBottom && S.status && S.status.following) setFollow(true);
+    lastTop = list.scrollTop;
+    render();
+  });
+  window.addEventListener("resize", render);
+  list.addEventListener("click", (ev) => {
+    const row = ev.target.closest(".row");
+    if (row && row.dataset.i !== undefined) select(Number(row.dataset.i));
+  });
+  const input = $("filter");
+  input.addEventListener("input", () => { clearTimeout(filterTimer); filterTimer = setTimeout(() => applyFilter(input.value.trim()), 250); });
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") applyFilter(input.value.trim());
+    if (ev.key === "Escape") { if (input.value) setFilter(""); else input.blur(); list.focus(); }
+  });
+
+  function move(delta) {
+    if (!S.count) return;
+    let k = S.selected >= 0 ? indexOfEntry(S.selected) : -1;
+    if (k < 0) k = delta > 0 ? -1 : S.count;
+    k = Math.max(0, Math.min(S.count - 1, k + delta));
+    select(idAt(k), { tab: S.tab === "entry" ? undefined : false });
+  }
+  async function nextError(dir) {
+    // the next visible error after the selection, found on the server with a filter on top of the current one
+    const q = (S.filter ? S.filter + " " : "") + "level>=error";
+    const m = await api("/api/match?filter=" + encodeURIComponent(q) + "&from=0");
+    if (!m.ids && !m.all) return;
+    const ids = m.ids || [];
+    const cur = S.selected;
+    const next = dir > 0 ? ids.find((i) => i > cur) : [...ids].reverse().find((i) => i < cur);
+    if (next !== undefined) select(next, { center: true });
+  }
+  document.addEventListener("keydown", (ev) => {
+    if (ev.target === input || ev.ctrlKey || ev.metaKey || ev.altKey || $("consent").open) return;
+    const k = ev.key;
+    if (k === "/") { ev.preventDefault(); input.focus(); input.select(); }
+    else if (k === "ArrowDown" || k === "j") { ev.preventDefault(); move(1); }
+    else if (k === "ArrowUp" || k === "k") { ev.preventDefault(); move(-1); }
+    else if (k === "PageDown") { ev.preventDefault(); move(rowsInView() - 1); }
+    else if (k === "PageUp") { ev.preventDefault(); move(-(rowsInView() - 1)); }
+    else if (k === "g" || k === "Home") { if (S.count) { setFollow(false); select(idAt(0), { tab: false }); list.scrollTop = 0; } }
+    else if (k === "G" || k === "End") { if (S.count) { select(idAt(S.count - 1), { tab: false }); setFollow(true); scrollToBottom(); } }
+    else if (k === "n") nextError(1);
+    else if (k === "N") nextError(-1);
+    else if (k === "a") showTab("analysis");
+    else if (k === "Enter" && S.selected >= 0) showTab("entry");
+    else if (k === "i" && aiUsable()) investigate(S.selected >= 0 ? S.selected : undefined);
+  });
+
+  // ---- start ----------------------------------------------------------------------------------------------
+  setFollow(true);
+  if (!token) {
+    $("banner").className = "banner err";
+    $("banner").textContent = "Open the address culprit printed in the terminal; it includes the key to this page.";
+  } else {
+    poll();
+  }
+})();
+</script>
+</body>
+</html>

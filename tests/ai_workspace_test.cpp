@@ -34,7 +34,9 @@ fs::path make_project() {
     std::string out;
     if (culprit::ai::run_program({"git", "-C", root.string(), "init", "-q"}, out) == 0) {
         culprit::ai::run_program({"git", "-C", root.string(), "-c", "user.email=t@t", "-c", "user.name=t", "add", "."}, out);
-        culprit::ai::run_program({"git", "-C", root.string(), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "first"}, out);
+        // never sign: the developer's own config may sign every commit, and ask for a passphrase each time
+        culprit::ai::run_program({"git", "-C", root.string(), "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false",
+                                  "commit", "-q", "--no-verify", "-m", "first"}, out);
     }
     return root;
 }

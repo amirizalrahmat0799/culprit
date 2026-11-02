@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(culprit VERSION 0.3.3 LANGUAGES CXX)
+project(culprit VERSION 0.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -12,6 +12,7 @@ endif()
 set(CULPRIT_VERSION "${PROJECT_VERSION}" CACHE STRING "Version string shown by --version")
 option(CULPRIT_BUILD_TESTS "Build the tests" ON)
 option(CULPRIT_AI "Build the AI investigator (culprit investigate, culprit ai)" ON)
+option(CULPRIT_WEB "Build the web viewer (culprit web)" ON)
 
 # One executable with nothing to install: static C++ runtime on Windows, static libstdc++ on Linux.
 if(MSVC)
@@ -34,6 +35,20 @@ FetchContent_Declare(ftxui
   FIND_PACKAGE_ARGS 7 CONFIG)
 FetchContent_MakeAvailable(ftxui)
 find_package(Threads REQUIRED)
+
+# cpp-httplib for culprit web: one header, pinned by its hash. CULPRIT_HTTPLIB_DIR can point at a copy instead.
+if(CULPRIT_WEB)
+  set(CULPRIT_HTTPLIB_VERSION "0.62.0")
+  set(CULPRIT_HTTPLIB_SHA256 "2d02fed52c7ddc501bbc489c770bcd7e4e92cf257a59c0b9048d59133bdaf7a0")
+  set(CULPRIT_HTTPLIB_DIR "" CACHE PATH "Folder holding httplib.h ${CULPRIT_HTTPLIB_VERSION}; downloaded when empty")
+  if(NOT CULPRIT_HTTPLIB_DIR)
+    set(CULPRIT_HTTPLIB_DIR "${CMAKE_BINARY_DIR}/_deps/httplib")
+    file(DOWNLOAD "https://raw.githubusercontent.com/yhirose/cpp-httplib/v${CULPRIT_HTTPLIB_VERSION}/httplib.h"
+         "${CULPRIT_HTTPLIB_DIR}/httplib.h"
+         EXPECTED_HASH SHA256=${CULPRIT_HTTPLIB_SHA256}
+         TLS_VERIFY ON)
+  endif()
+endif()
 
 # --- built-in rules: rules/*.toml compiled into the program ---------------------------------------------
 file(GLOB CULPRIT_RULE_FILES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/rules/*.toml")
@@ -79,12 +94,44 @@ if(CULPRIT_AI)
   target_compile_definitions(culprit_ai PUBLIC CULPRIT_WITH_AI)
 endif()
 
-# --- the culprit command ---------------------------------------------------------------------------------
-add_executable(culprit src/main.cpp src/cli.cpp src/tui/viewer.cpp src/tui/plain.cpp src/tui/report.cpp src/tui/style.cpp)
-target_link_libraries(culprit PRIVATE culprit_core ftxui::screen ftxui::dom ftxui::component)
+# --- reports: the analysis (and an AI finding) as text, Markdown or JSON; no terminal library ---------------
+add_library(culprit_output STATIC src/tui/report.cpp src/tui/style.cpp)
+target_link_libraries(culprit_output PUBLIC culprit_core)
 if(CULPRIT_AI)
-  target_sources(culprit PRIVATE src/tui/finding.cpp src/cli_ai.cpp)
+  target_sources(culprit_output PRIVATE src/tui/finding.cpp)
+  target_link_libraries(culprit_output PUBLIC culprit_ai)
+endif()
+
+# --- web viewer: a small server on 127.0.0.1 with the page compiled in -----------------------------------
+if(CULPRIT_WEB)
+  set(CULPRIT_WEB_PAGE_CPP "${CMAKE_BINARY_DIR}/generated/web_page.cpp")
+  add_custom_command(
+    OUTPUT "${CULPRIT_WEB_PAGE_CPP}"
+    COMMAND "${CMAKE_COMMAND}" -DIN=${CMAKE_SOURCE_DIR}/src/web/index.html -DOUT=${CULPRIT_WEB_PAGE_CPP}
+            -DSYMBOL=kWebPage -P "${CMAKE_SOURCE_DIR}/cmake/embed_file.cmake"
+    DEPENDS "${CMAKE_SOURCE_DIR}/src/web/index.html" "${CMAKE_SOURCE_DIR}/cmake/embed_file.cmake"
+    COMMENT "Embedding the web viewer page"
+    VERBATIM)
+  add_library(culprit_web STATIC src/web/server.cpp src/web/browser.cpp "${CULPRIT_WEB_PAGE_CPP}")
+  target_include_directories(culprit_web SYSTEM PRIVATE "${CULPRIT_HTTPLIB_DIR}")
+  target_link_libraries(culprit_web PUBLIC culprit_output)
+  # long polls each hold a worker thread while they wait: allow a few browser tabs' worth
+  target_compile_definitions(culprit_web PUBLIC CULPRIT_WITH_WEB CPPHTTPLIB_THREAD_POOL_COUNT=16)
+  if(WIN32)
+    target_link_libraries(culprit_web PUBLIC ws2_32 shell32)
+  endif()
+endif()
+
+# --- the culprit command ---------------------------------------------------------------------------------
+add_executable(culprit src/main.cpp src/cli.cpp src/tui/viewer.cpp src/tui/plain.cpp)
+target_link_libraries(culprit PRIVATE culprit_core culprit_output ftxui::screen ftxui::dom ftxui::component)
+if(CULPRIT_AI)
+  target_sources(culprit PRIVATE src/cli_ai.cpp)
   target_link_libraries(culprit PRIVATE culprit_ai)
+endif()
+if(CULPRIT_WEB)
+  target_sources(culprit PRIVATE src/cli_web.cpp)
+  target_link_libraries(culprit PRIVATE culprit_web)
 endif()
 target_compile_definitions(culprit PRIVATE CULPRIT_VERSION="${CULPRIT_VERSION}")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -109,6 +156,11 @@ if(CULPRIT_BUILD_TESTS)
   if(CULPRIT_AI)
     target_sources(culprit_tests PRIVATE tests/ai_json_test.cpp tests/ai_workspace_test.cpp tests/ai_investigator_test.cpp)
     target_link_libraries(culprit_tests PRIVATE culprit_ai)
+  endif()
+  if(CULPRIT_WEB)
+    target_sources(culprit_tests PRIVATE tests/web_test.cpp)
+    target_include_directories(culprit_tests SYSTEM PRIVATE "${CULPRIT_HTTPLIB_DIR}")
+    target_link_libraries(culprit_tests PRIVATE culprit_web)
   endif()
   target_compile_definitions(culprit_tests PRIVATE CULPRIT_TESTDATA="${CMAKE_SOURCE_DIR}/testdata")
   add_test(NAME culprit_tests COMMAND culprit_tests)

@@ -20,6 +20,9 @@
 #include "ai/subject.hpp"
 #include "cli_ai.hpp"
 #endif
+#ifdef CULPRIT_WITH_WEB
+#include "cli_web.hpp"
+#endif
 #include "tui/plain.hpp"
 #include "tui/report.hpp"
 #include "tui/viewer.hpp"
@@ -52,6 +55,7 @@ Usage:
   command | culprit [options]          view what a command prints
   culprit analyze [options] [file...]  print what went wrong: the likely root cause, known problems
                                        and repeated errors (reads stdin when no file is given)
+  culprit web [file...]                the same in your browser: live logs, the analysis and AI
   culprit rules [--check] [id...]      list the rules culprit knows, show one, or check your own
   culprit investigate [file...]        ask an AI to find the root cause in your code (set it up first)
   culprit ai setup                     choose the AI: Ollama on this computer, a free cloud service,
@@ -60,6 +64,7 @@ Usage:
 Examples:
   culprit app.log
   docker compose logs -f | culprit
+  docker compose logs -f | culprit web
   kubectl logs -f deploy/api | culprit --filter "level>=warn"
   culprit analyze app.log
   docker compose logs --no-color | culprit analyze --format markdown > report.md
@@ -327,6 +332,14 @@ int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "analyze") == 0) return run_analyze(argc, argv);
     if (argc > 1 && std::strcmp(argv[1], "analyse") == 0) return run_analyze(argc, argv);
     if (argc > 1 && std::strcmp(argv[1], "rules") == 0) return run_rules(argc, argv);
+    if (argc > 1 && std::strcmp(argv[1], "web") == 0) {
+#ifdef CULPRIT_WITH_WEB
+        return run_web(argc, argv);
+#else
+        std::fputs("culprit: this culprit was built without the web viewer (CULPRIT_WEB=OFF)\n", stderr);
+        return 2;
+#endif
+    }
     if (argc > 1 && (std::strcmp(argv[1], "ai") == 0 || std::strcmp(argv[1], "investigate") == 0)) {
 #ifdef CULPRIT_WITH_AI
         return std::strcmp(argv[1], "ai") == 0 ? run_ai(argc, argv) : run_investigate(argc, argv);

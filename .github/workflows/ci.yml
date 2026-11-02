@@ -35,6 +35,27 @@ jobs:
           if "$exe" analyze --fail-on error testdata/incident-migration.log > /dev/null; then
             echo "--fail-on error should have failed"; exit 1
           fi
+      - name: Web viewer
+        shell: bash
+        run: |
+          exe=$(find build -name 'culprit' -o -name 'culprit.exe' | grep -v '\.dir' | grep -v '_tests' | head -1)
+          "$exe" web --no-open --no-follow --port 0 testdata/incident-migration.log 2> web.err &
+          pid=$!
+          trap 'kill $pid 2>/dev/null || true' EXIT
+          for _ in $(seq 50); do grep -q 'http://127.0.0.1' web.err 2>/dev/null && break; sleep 0.2; done
+          url=$(grep -o 'http://127.0.0.1[^ ]*' web.err | tr -d '\r')
+          token=${url##*t=}
+          base=${url%%/\?t=*}
+          echo "$base"
+          # the page and the API need the key
+          [ "$(curl -s -o /dev/null -w '%{http_code}' "$base/")" = 403 ]
+          [ "$(curl -s -o /dev/null -w '%{http_code}' "$base/api/status")" = 403 ]
+          curl -sf "$url" | grep -q '<title>culprit</title>'
+          for _ in $(seq 50); do
+            curl -sf -H "X-Culprit-Token: $token" "$base/api/report" | grep -q 'V7__add_refunds.sql' && ok=1 && break
+            sleep 0.2
+          done
+          [ "${ok:-}" = 1 ]
       - name: AI investigation against a fake provider
         if: runner.os != 'Windows'
         shell: bash

@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <string>
+#include <string_view>
 
 #include "core/analyzer.hpp"
 #include "core/rules.hpp"
@@ -21,6 +22,11 @@ struct ReportOptions {
 };
 
 void print_report(std::FILE* out, const Report& report, const ReportOptions& options);
+
+/// The report as JSON (what `culprit analyze --format json` prints), for other tools and the web viewer.
+std::string report_json(const Report& report, const std::string& title);
+/// `s` as a JSON string literal, quotes included.
+std::string json_string(std::string_view s);
 
 /// `culprit rules`: one line per rule.
 void print_rule_list(std::FILE* out, const RuleSet& rules, bool color);

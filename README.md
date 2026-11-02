@@ -13,6 +13,7 @@ docker compose logs -f | culprit
 kubectl logs -f deploy/api | culprit
 culprit analyze app.log        # print the likely root cause and what to do
 culprit investigate app.log    # optional: ask an AI to find the cause in your code
+culprit web app.log            # the same in your browser
 ```
 
 ![culprit showing a Spring Boot log](docs/images/viewer.png)
@@ -120,6 +121,32 @@ credentials, anything git ignores). Values like passwords are redacted in what i
 is sent to a provider that isn't on your computer, culprit asks. It can be switched off per run (`--no-ai`),
 per machine (`CULPRIT_AI=off`), or for a whole project (`ai = false` in `.culprit/config.toml`).
 See [Investigating with AI](docs/ai.md).
+
+## In your browser
+
+`culprit web` shows the same things in a browser tab: the log, following live, with the analysis beside it
+and the AI investigation a click away.
+
+```bash
+culprit web app.log
+docker compose logs -f | culprit web
+```
+
+![culprit web: the log, and the likely root cause beside it](docs/images/web.png)
+
+It's for longer investigations, for wide logs that don't fit a terminal, and for showing someone else what
+went wrong. Filter with the same language as the viewer, click a problem to see its entries, open an entry for
+its fields and stack trace, and start an investigation from any error. The steps appear as the AI works, and
+the finding shows each quote with `✓` or `✗` after culprit has checked it against your files.
+
+![An AI finding in culprit web, with checked evidence](docs/images/web-ai.png)
+
+The page is part of the culprit program, and nothing is installed or downloaded. The server listens only on
+`127.0.0.1`, and the address culprit prints carries a random key: without it the server answers nothing, so
+other websites open in your browser and other users on your computer can't read your logs through it. It
+also refuses requests that name another host (DNS rebinding), and starting an investigation needs the key in
+a header that a page on another site can't send. Before anything goes to an AI that isn't on your computer,
+the page asks, as the terminal does.
 
 ## What it does
 
@@ -241,6 +268,14 @@ culprit investigate [options] [file...]
       --show-prompt      print what would be sent, and stop
       --project <dir>    the project to read (default: the git repository you're in)
 
+culprit web [options] [file...]
+  -F, --filter <query>   start with a filter
+  -n, --no-follow        read files to the end and stop watching them
+      --port <n>         the port to try first (default 4790; the next free one is used)
+      --no-open          print the address instead of opening the browser
+      --rules <path>     more rules
+      --no-ai            don't offer AI investigation
+
 culprit ai setup | status | on | off
 ```
 
@@ -261,6 +296,8 @@ src/core/      no terminal code; tested on its own
 src/ai/        the investigator: providers (OpenAI-compatible and Anthropic), the read-only project tools and
                their safety checks, the step loop, and checking the evidence
 src/tui/       the FTXUI viewer, the plain printer and the analyze report
+src/web/       culprit web: a small server on 127.0.0.1 with a JSON API, and the page (one HTML file,
+               compiled into the program)
 rules/         culprit's own rules, compiled into the program
 ```
 
@@ -276,9 +313,14 @@ rules/         culprit's own rules, compiled into the program
   resulting from them, with high, medium or low confidence. Times are compared across services only when the log
   says which time zone it uses; otherwise the order the lines arrived in decides.
 - **Every rule carries a real log line as an example,** and the tests check each rule recognises its own.
-- **No HTTP library is bundled.** culprit uses the system's own: libcurl on Linux and macOS (loaded only when
-  the AI is used) and WinHTTP on Windows, so it stays one small file and follows the system's proxy and
-  certificate settings.
+- **To talk to an AI, culprit uses the system's HTTP client:** libcurl on Linux and macOS (loaded only when
+  the AI is used) and WinHTTP on Windows, so it follows the system's proxy and certificate settings.
+- **The web viewer's server is [cpp-httplib](https://github.com/yhirose/cpp-httplib),** one header,
+  downloaded by the build and pinned by its SHA-256. The page is plain HTML and JavaScript with no framework,
+  and it puts log text on the page only as text, never as HTML, so a log line can't run code in it.
+- **The browser asks for what it shows.** The server holds the entries; the page asks which ones match the
+  filter and fetches only the rows in view, so a log of hundreds of thousands of lines scrolls as smoothly as a short one.
+  It learns about new lines with a long poll: a request that waits until something changes.
 - **The AI's safety rules are enforced by culprit, not asked of the model.** Every path it requests is
   resolved and checked before anything is read, and its answer is checked against the files after.
 - **Piped input and the keyboard both work:** culprit keeps a copy of the pipe and points stdin back at the
@@ -292,21 +334,23 @@ ctest --test-dir build --output-on-failure
 
 The sample logs in [`testdata/`](testdata) cover every supported format, plus an incident where a failed
 migration takes down an app behind nginx, and [`testdata/kedai`](testdata/kedai) is the small project behind it.
-The AI tests use a scripted model, and `tests/ai_e2e.sh` runs whole investigations over HTTP against a fake
+The web tests start the server and check that it answers nothing without its key or for another host,
+and what each API returns. The AI tests use a scripted model, and `tests/ai_e2e.sh` runs whole investigations over HTTP against a fake
 provider in both API formats, checking that secrets and files outside the project are never sent. The tests check what each one parses into (levels, loggers, threads,
 messages, fields, stack traces kept whole, the first frame in your code) and what the analysis finds. Every
 built-in rule is checked against its examples. CI builds and tests on Windows, Linux and macOS.
 
 ## Roadmap
 
-culprit is being built in three steps:
+culprit was built in four steps:
 
 1. **The viewer** (0.1): reading, following, filtering, and pointing at your code.
 2. **The analyser** (0.2): rules that recognise common problems and say what to do, groups of repeated
    errors, and the *first* failure behind a cascade of follow-on errors.
-3. **The investigator** (0.3, this release): an AI of your choice (Ollama on your computer, a free cloud
+3. **The investigator** (0.3): an AI of your choice (Ollama on your computer, a free cloud
    service, or your own API key) reads your project, read-only, and explains the root cause with evidence
    that culprit checks against your files.
+4. **The web viewer** (0.4, this release): all of it in a browser tab, live, on your own computer.
 
 ## License
 

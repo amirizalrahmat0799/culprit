@@ -13,7 +13,8 @@ culprit investigate --line 214 app.log
 docker compose logs --no-color | culprit investigate
 ```
 
-In the viewer, select an error (or a problem in the `a` panel) and press `i`.
+In the viewer, select an error (or a problem in the `a` panel) and press `i`. In `culprit web`, click
+**Investigate with AI** on the likely root cause, a problem, or any entry.
 
 ## Choosing an AI
 

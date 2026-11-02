@@ -14,7 +14,9 @@ TEST("ai json: parse and write back") {
     CHECK_EQ((*j)["b"][3].str(), std::string("x\n\"y\""));
     CHECK_EQ((*j)["c"]["d"].str(), std::string("\xc3\xa9\xf0\x9f\x98\x80"));
     CHECK((*j)["missing"]["deeper"].is_null());
-    CHECK_EQ(j->dump(), std::string(R"({"a":1,"b":[true,false,null,"x\n\"y\"",2.5],"c":{"d":"é😀"}})"));
+    // outside the macro: Visual Studio 2022's preprocessor fails on a raw string holding \" in a macro argument
+    const std::string expected = R"({"a":1,"b":[true,false,null,"x\n\"y\"",2.5],"c":{"d":"é😀"}})";
+    CHECK_EQ(j->dump(), expected);
 }
 
 TEST("ai json: building values keeps member order and replaces keys") {
