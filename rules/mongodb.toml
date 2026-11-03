@@ -1,0 +1,87 @@
+# MongoDB: errors from the drivers (Java, Spring Data MongoDB, Node, Mongoose, PyMongo) and the server.
+
+[[rule]]
+id = "mongodb.duplicate-key"
+title = "MongoDB duplicate key in {collection} ({index})"
+examples = [
+  "com.mongodb.MongoWriteException: Write operation error on server mongo:27017. Write error: WriteError{code=11000, message='E11000 duplicate key error collection: shop.users index: email_1 dup key: { email: \"ali@example.com\" }', details={}}.",
+  'MongoServerError: E11000 duplicate key error collection: shop.users index: email_1 dup key: { email: "ali@example.com" }',
+]
+severity = "error"
+priority = 15
+tags = ["mongodb", "database"]
+contains = ["e11000 duplicate key error"]
+regex = 'collection: (\S+) index: (\S+)'
+captures = ["collection", "index"]
+explain = """
+An insert or update would have made two documents in {collection} share a value that the unique index \
+{index} allows only once. Usually a double submit, a retry of a write that had already succeeded, or a \
+check-then-insert race."""
+fix = [
+  "If the value can legitimately exist already, catch the duplicate-key error (code 11000) and answer a conflict (409) instead of a 500.",
+  "For retries, make the write idempotent: an upsert, or a client-generated id.",
+  "Don't check-then-insert in two steps; rely on the unique index.",
+]
+
+[[rule]]
+id = "mongodb.server-selection"
+title = "MongoDB is not reachable"
+examples = [
+  "com.mongodb.MongoTimeoutException: Timed out after 30000 ms while waiting for a server that matches ReadPreferenceServerSelector{readPreference=primary}. Client view of cluster state is {type=UNKNOWN, servers=[{address=localhost:27017, type=UNKNOWN, state=CONNECTING, exception={com.mongodb.MongoSocketOpenException: Exception opening socket}, caused by {java.net.ConnectException: Connection refused}}]",
+  'MongoServerSelectionError: connect ECONNREFUSED 127.0.0.1:27017',
+  'pymongo.errors.ServerSelectionTimeoutError: localhost:27017: [Errno 111] Connection refused, Timeout: 30s',
+]
+severity = "error"
+symptom = true
+priority = 15
+tags = ["mongodb", "database", "connections"]
+contains = ["while waiting for a server that matches", "mongoserverselectionerror", "serverselectiontimeouterror", "mongosocketopenexception"]
+explain = """
+The driver couldn't find a MongoDB server it could use within its timeout (30 s by default): MongoDB is down \
+or unreachable, the host in the connection string is wrong, or (with a replica set) the members advertise \
+names this client can't resolve."""
+fix = [
+  "Check MongoDB answers: mongosh <connection string> --eval 'db.runCommand({ping: 1})'",
+  "Check the host in the connection string; inside Docker use the service name, not localhost.",
+  "With a replica set, the member names in rs.conf() must be reachable from the app; use directConnection=true to reach a single member for debugging.",
+]
+
+[[rule]]
+id = "mongodb.auth-failed"
+title = "MongoDB refused the login"
+examples = [
+  "com.mongodb.MongoSecurityException: Exception authenticating MongoCredential{mechanism=SCRAM-SHA-256, userName='shop', source='admin', password=<hidden>, mechanismProperties=<hidden>}",
+  'MongoServerError: Authentication failed.',
+]
+severity = "critical"
+priority = 15
+tags = ["mongodb", "database", "auth"]
+contains = ["exception authenticating mongocredential", "mongosecurityexception", "mongoservererror: authentication failed", "pymongo.errors.operationfailure: authentication failed"]
+explain = """
+MongoDB rejected the username or password, or looked for the user in the wrong database. Users are stored in \
+the database they were created in, and the connection string's authSource must name it (often admin)."""
+fix = [
+  "Check the username and password in the connection string; special characters must be URL-encoded.",
+  "Add authSource=admin (or the database where the user was created) to the connection string.",
+  "Check the user exists: db.getSiblingDB('admin').getUsers()",
+]
+
+[[rule]]
+id = "mongodb.unauthorized"
+title = "MongoDB user may not run {command}"
+examples = [
+  "com.mongodb.MongoCommandException: Command failed with error 13 (Unauthorized): 'not authorized on shop to execute command { insert: \"orders\", ordered: true, $db: \"shop\" }' on server mongo:27017.",
+  'MongoServerError: not authorized on shop to execute command { find: "orders", filter: {}, lsid: { id: UUID("1c0f...") }, $db: "shop" }',
+]
+severity = "error"
+priority = 15
+tags = ["mongodb", "database", "permissions"]
+contains = ["not authorized on"]
+regex = 'execute command \{ (\w+)'
+captures = ["command"]
+explain = """
+The user logged in, but has no role that allows "{command}" on this database."""
+fix = [
+  "Grant a role on the database: db.grantRolesToUser('<user>', [{ role: 'readWrite', db: '<database>' }])",
+  "Check the app connects to the database the user has roles on.",
+]

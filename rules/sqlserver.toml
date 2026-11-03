@@ -1,0 +1,129 @@
+# Microsoft SQL Server: errors from the server and its drivers (JDBC, Microsoft.Data.SqlClient, pyodbc).
+
+[[rule]]
+id = "sqlserver.deadlock"
+title = "SQL Server chose this transaction as a deadlock victim"
+examples = [
+  'com.microsoft.sqlserver.jdbc.SQLServerException: Transaction (Process ID 64) was deadlocked on lock resources with another process and has been chosen as the deadlock victim. Rerun the transaction.',
+]
+severity = "error"
+priority = 15
+tags = ["sqlserver", "database", "locks"]
+contains = ["has been chosen as the deadlock victim"]
+explain = """
+Two transactions each held a lock the other needed, so SQL Server rolled this one back (error 1205). Retrying \
+usually works; frequent deadlocks mean transactions touch the same rows in different orders or hold locks \
+too long."""
+fix = [
+  "Retry the transaction on error 1205.",
+  "Find the pair: the system_health extended event session keeps the deadlock graphs.",
+  "Update tables and rows in the same order everywhere, keep transactions short, and index the columns in their WHERE clauses.",
+  "Consider READ_COMMITTED_SNAPSHOT so readers don't block writers.",
+]
+
+[[rule]]
+id = "sqlserver.login-failed"
+title = "SQL Server login failed for {user}"
+examples = [
+  "com.microsoft.sqlserver.jdbc.SQLServerException: Login failed for user 'shop'. ClientConnectionId:2f6b9c1e-8a7d-4f62-9d13-5b0a3c1e7f20",
+  "Microsoft.Data.SqlClient.SqlException (0x80131904): Login failed for user 'shop'.",
+]
+severity = "critical"
+priority = 15
+tags = ["sqlserver", "database", "auth"]
+contains = ["login failed for user"]
+regex = "Login failed for user '([^']*)'"
+captures = ["user"]
+explain = """
+SQL Server rejected the login for {user} (error 18456). The password is wrong, the login doesn't exist or \
+is disabled, the server only allows Windows logins, or the default database is missing. The server's error \
+log has a state number that says which."""
+fix = [
+  "Check the user and password in the connection string.",
+  "For a SQL login, check the server allows SQL Server authentication (mixed mode).",
+  "Look up the state in the SQL Server error log: state 8 is a wrong password, 5 an unknown user, 38 or 40 a missing database.",
+]
+
+[[rule]]
+id = "sqlserver.timeout"
+title = "SQL Server query timed out"
+examples = [
+  'Microsoft.Data.SqlClient.SqlException (0x80131904): Execution Timeout Expired.  The timeout period elapsed prior to completion of the operation or the server is not responding.',
+  'com.microsoft.sqlserver.jdbc.SQLServerException: The query has timed out.',
+]
+severity = "error"
+priority = 15
+tags = ["sqlserver", "database", "performance"]
+contains = ["execution timeout expired", "the query has timed out"]
+explain = """
+A command ran longer than the client's timeout (30 seconds by default in .NET) and was cancelled. The query \
+is slow, or it waited for locks held by another transaction."""
+fix = [
+  "Look for blocking at the time: sp_who2, or sys.dm_exec_requests where blocking_session_id <> 0.",
+  "Check the query plan for scans that need an index (Query Store keeps the history).",
+  "Raise the command timeout only for queries that are slow on purpose, such as reports.",
+]
+
+[[rule]]
+id = "sqlserver.unreachable"
+title = "SQL Server is not reachable"
+examples = [
+  'com.microsoft.sqlserver.jdbc.SQLServerException: The TCP/IP connection to the host localhost, port 1433 has failed. Error: "Connection refused. Verify the connection properties. Make sure that an instance of SQL Server is running on the host and accepting TCP/IP connections at the port."',
+  'Microsoft.Data.SqlClient.SqlException (0x80131904): A network-related or instance-specific error occurred while establishing a connection to SQL Server. The server was not found or was not accessible.',
+]
+severity = "error"
+symptom = true
+priority = 15
+tags = ["sqlserver", "database", "connections"]
+contains = ["the tcp/ip connection to the host", "a network-related or instance-specific error occurred"]
+explain = """
+The driver couldn't open a connection to SQL Server: it's down, TCP/IP is disabled for the instance, a \
+firewall blocks port 1433, or the host or instance name is wrong."""
+fix = [
+  "Check the server answers on its port: nc -vz <host> 1433 (Test-NetConnection <host> -Port 1433 on Windows).",
+  "For a named instance, the SQL Server Browser service must run, or give the port explicitly.",
+  "In SQL Server Configuration Manager, check TCP/IP is enabled for the instance.",
+]
+
+[[rule]]
+id = "sqlserver.object-missing"
+title = "SQL Server object {name} doesn't exist"
+examples = [
+  "Microsoft.Data.SqlClient.SqlException (0x80131904): Invalid object name 'dbo.Orders'.",
+  "com.microsoft.sqlserver.jdbc.SQLServerException: Invalid object name 'Refunds'.",
+]
+severity = "error"
+priority = 15
+tags = ["sqlserver", "database", "migrations"]
+contains = ["invalid object name"]
+regex = "Invalid object name '([^']+)'"
+captures = ["name"]
+explain = """
+A query used the table or view {name}, and the database the app is connected to has none (error 208). A \
+migration didn't run, the app points at another database, or the schema is different (dbo or another)."""
+fix = [
+  "Check the migrations ran against this database (__EFMigrationsHistory, flyway_schema_history ...).",
+  "Check the database name (Initial Catalog / databaseName) in the connection string.",
+  "If the table is in another schema, name the schema in the query or the mapping.",
+]
+
+[[rule]]
+id = "sqlserver.duplicate-key"
+title = "SQL Server duplicate key in {table}"
+examples = [
+  "Microsoft.Data.SqlClient.SqlException (0x80131904): Cannot insert duplicate key row in object 'dbo.Users' with unique index 'IX_Users_Email'. The duplicate key value is (ali@example.com).",
+  "com.microsoft.sqlserver.jdbc.SQLServerException: Violation of PRIMARY KEY constraint 'PK_Orders'. Cannot insert duplicate key in object 'dbo.Orders'. The duplicate key value is (42).",
+]
+severity = "error"
+priority = 15
+tags = ["sqlserver", "database"]
+contains = ["cannot insert duplicate key"]
+regex = "duplicate key (?:row )?in object '([^']+)'"
+captures = ["table"]
+explain = """
+An insert or update would have put a value into {table} that a primary key or unique index allows only \
+once (errors 2601 and 2627). Usually a double submit, a retried write, or a check-then-insert race."""
+fix = [
+  "Catch errors 2601 and 2627 and answer a conflict (409) when the value can legitimately exist already.",
+  "Make retried writes idempotent (MERGE, or check by a client-generated key).",
+]

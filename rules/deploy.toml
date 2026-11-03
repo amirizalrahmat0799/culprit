@@ -1,0 +1,262 @@
+# Deployment and the machine: Kubernetes scheduling, volumes and permissions, Docker and Compose, systemd,
+# cron, and clocks that disagree.
+
+# ---- Kubernetes ---------------------------------------------------------------------------------------
+
+[[rule]]
+id = "kubernetes.failed-scheduling"
+title = "Pod can't be scheduled: {detail}"
+examples = [
+  'Warning  FailedScheduling  41s   default-scheduler  0/3 nodes are available: 3 Insufficient memory. preemption: 0/3 nodes are available: 3 No preemption victims found for incoming pod.',
+  'Warning  FailedScheduling  12s   default-scheduler  0/2 nodes are available: 1 Insufficient cpu, 1 node(s) had untolerated taint {node-role.kubernetes.io/control-plane: }. preemption: 0/2 nodes are available: 1 No preemption victims found for incoming pod, 1 Preemption is not helpful for scheduling.',
+]
+severity = "critical"
+priority = 15
+tags = ["kubernetes", "deploy"]
+contains = ["failedscheduling", "nodes are available:"]
+regex = '\d+/\d+ nodes are available: ([^.]+)'
+captures = ["detail"]
+explain = """
+No node can take the pod, so it stays Pending: {detail}. "Insufficient cpu/memory" means the pod's requests \
+are bigger than any node's free capacity; a taint or node selector means the pod isn't allowed on the nodes \
+that have room."""
+fix = [
+  "See the requests: kubectl describe pod <pod> (Requests), and the free capacity: kubectl describe nodes (Allocated resources).",
+  "Lower the pod's resources.requests if they're more than it needs, or add nodes (or let the cluster autoscaler).",
+  "For taints and selectors, check the pod's nodeSelector, affinity and tolerations against the nodes' labels and taints.",
+]
+
+[[rule]]
+id = "kubernetes.pvc-unbound"
+title = "Pod waits for a volume that isn't bound"
+examples = [
+  'Warning  FailedScheduling  5s   default-scheduler  0/3 nodes are available: pod has unbound immediate PersistentVolumeClaims. preemption: 0/3 nodes are available: 3 Preemption is not helpful for scheduling.',
+  'Warning  ProvisioningFailed  persistentvolumeclaim/data-postgres-0  storageclass.storage.k8s.io "fast-ssd" not found',
+]
+severity = "critical"
+priority = 18
+tags = ["kubernetes", "storage", "deploy"]
+contains = ["unbound immediate persistentvolumeclaims", "provisioningfailed"]
+explain = """
+The pod needs a PersistentVolumeClaim that has no volume yet, so it can't start. The storage class doesn't \
+exist or can't provision, no PersistentVolume matches the claim's size and access mode, or the provisioner \
+failed."""
+fix = [
+  "See why: kubectl describe pvc <claim> (the Events at the bottom).",
+  "Check the storage class exists: kubectl get storageclass, and that storageClassName matches.",
+  "On a local cluster without a provisioner, create a PersistentVolume by hand or install one (local-path-provisioner).",
+]
+
+[[rule]]
+id = "kubernetes.mount-failed"
+title = "A volume couldn't be mounted"
+examples = [
+  'Warning  FailedMount  2m   kubelet  Unable to attach or mount volumes: unmounted volumes=[data], unattached volumes=[data kube-api-access-7x2kq]: timed out waiting for the condition',
+  'Warning  FailedMount  30s  kubelet  MountVolume.MountDevice failed for volume "pvc-1f2e" : rpc error: code = Internal desc = mount failed: exit status 32',
+]
+severity = "critical"
+priority = 9
+tags = ["kubernetes", "storage", "deploy"]
+contains = ["failedmount", "unable to attach or mount volumes", "mountvolume.setup failed", "mountvolume.mountdevice failed"]
+explain = """
+The kubelet couldn't attach or mount a volume the pod needs, so the pod stays in ContainerCreating. Common \
+causes: the disk is still attached to another node (a ReadWriteOnce volume), the NFS or cloud disk isn't \
+reachable, or a ConfigMap or Secret it mounts doesn't exist."""
+fix = [
+  "See the details: kubectl describe pod <pod> (Events).",
+  "For a ReadWriteOnce volume, check no other pod on another node still uses it (an old replica during a rolling update).",
+  "For NFS or cloud disks, check the node can reach the storage and the CSI driver pods are healthy.",
+]
+
+[[rule]]
+id = "kubernetes.rbac-forbidden"
+title = "{user} isn't allowed to {verb} {resource}"
+examples = [
+  'pods is forbidden: User "system:serviceaccount:shop:api" cannot list resource "pods" in API group "" in the namespace "shop"',
+  'Error from server (Forbidden): secrets is forbidden: User "dev@example.com" cannot get resource "secrets" in API group "" in the namespace "prod"',
+]
+severity = "error"
+priority = 15
+tags = ["kubernetes", "rbac", "permissions"]
+contains = ["is forbidden: user"]
+regex = 'User "([^"]+)" cannot (\w+) resource "([^"]+)"'
+captures = ["user", "verb", "resource"]
+explain = """
+The Kubernetes API refused the request: no Role or ClusterRole bound to {user} allows "{verb}" on \
+"{resource}" there. For an app this usually means its ServiceAccount is missing a RoleBinding."""
+fix = [
+  "Check what's allowed: kubectl auth can-i {verb} {resource} --as {user} -n <namespace>",
+  "Give the ServiceAccount a Role with the verb and resource, and a RoleBinding to it, in that namespace.",
+  "Grant only what the app needs; avoid cluster-admin.",
+]
+
+# ---- Docker and Compose -------------------------------------------------------------------------------
+
+[[rule]]
+id = "docker.exec-format"
+title = "The image was built for another CPU (exec format error)"
+examples = [
+  'exec /usr/local/bin/docker-entrypoint.sh: exec format error',
+  'standard_init_linux.go:228: exec user process caused: exec format error',
+]
+severity = "critical"
+priority = 20
+tags = ["docker", "kubernetes", "deploy"]
+contains = ["exec format error"]
+explain = """
+The container's program was built for a different CPU architecture than the machine running it: typically \
+an image built on an Apple Silicon Mac (arm64) running on an x86 server (amd64), or the reverse. It can also \
+be a script whose first line (#!) is missing or has Windows line endings."""
+fix = [
+  "Check the image's architecture: docker image inspect <image> | grep Architecture",
+  "Build for the server's platform: docker build --platform linux/amd64 ..., or a multi-platform image with docker buildx build --platform linux/amd64,linux/arm64",
+  "For an entrypoint script, make sure it starts with #!/bin/sh and has Unix (LF) line endings.",
+]
+
+[[rule]]
+id = "docker.port-allocated"
+title = "Docker can't publish port {port}: it's taken"
+examples = [
+  'Error response from daemon: driver failed programming external connectivity on endpoint shop-db-1 (3f1c...): Bind for 0.0.0.0:5432 failed: port is already allocated',
+]
+severity = "critical"
+priority = 20
+tags = ["docker", "compose", "ports"]
+contains = ["port is already allocated"]
+regex = 'Bind for [^:]+:(\d+) failed'
+captures = ["port"]
+explain = """
+The container asks to publish port {port} on the host, and something else already uses it: another container \
+(often the same project started twice), or a program on the host such as a local database."""
+fix = [
+  "Find what has it: docker ps --filter publish={port}, and on the host: lsof -i :{port} (netstat -ano | findstr :{port} on Windows).",
+  "Stop the other one, or publish on another host port: \"15432:5432\".",
+]
+
+[[rule]]
+id = "docker.daemon"
+title = "Can't talk to the Docker daemon"
+examples = [
+  'permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock: Get "http://%2Fvar%2Frun%2Fdocker.sock/v1.45/containers/json": dial unix /var/run/docker.sock: connect: permission denied',
+  'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?',
+]
+severity = "critical"
+priority = 20
+tags = ["docker", "ci"]
+contains = ["docker daemon socket", "cannot connect to the docker daemon"]
+explain = """
+The docker command couldn't reach the Docker daemon: either it isn't running, or this user isn't allowed to \
+use its socket."""
+fix = [
+  "Start it: sudo systemctl start docker (or open Docker Desktop).",
+  "For permission denied, add the user to the docker group: sudo usermod -aG docker $USER, then log out and in.",
+  "In CI, make sure the job has Docker available (a docker:dind service, or a runner with Docker).",
+]
+
+[[rule]]
+id = "compose.unhealthy-dependency"
+title = "Compose didn't start a service: {container} is unhealthy"
+examples = [
+  'dependency failed to start: container shop-db-1 is unhealthy',
+]
+severity = "critical"
+priority = 20
+tags = ["docker", "compose", "startup"]
+contains = ["dependency failed to start"]
+regex = 'container (\S+) is unhealthy'
+captures = ["container"]
+explain = """
+A service waits for {container} with depends_on: condition: service_healthy, and {container}'s healthcheck \
+kept failing, so Compose gave up. Either {container} really didn't start, or its healthcheck command is \
+wrong or too impatient."""
+fix = [
+  "Look at its log: docker compose logs {container}",
+  "See the healthcheck results: docker inspect {container} (the State.Health section).",
+  "Give a slow service more time: healthcheck start_period, interval and retries.",
+]
+
+# ---- systemd and cron -------------------------------------------------------------------------------------
+
+[[rule]]
+id = "systemd.service-failed"
+title = "Service {unit} exited with {status}"
+examples = [
+  'Nov 04 10:00:01 web-1 systemd[1]: kedai.service: Main process exited, code=exited, status=1/FAILURE',
+  'Nov 04 10:00:05 web-1 systemd[1]: kedai.service: Main process exited, code=killed, status=9/KILL',
+]
+severity = "error"
+priority = 15
+tags = ["systemd", "linux"]
+contains = ["main process exited, code="]
+regex = '(\S+\.service): Main process exited, code=\w+, status=(\S+)'
+captures = ["unit", "status"]
+explain = """
+The program systemd runs for {unit} stopped with {status}. An exit status means the program ended with an \
+error; KILL (9) usually means the OOM killer or a stop timeout, TERM (15) means something stopped it."""
+fix = [
+  "See its own output just before: journalctl -u {unit} -n 100 --no-pager",
+  "For 9/KILL, check for the OOM killer: journalctl -k | grep -i oom",
+  "For 203/EXEC or 217/USER, the unit file is wrong: the program path, or the User= it runs as.",
+]
+
+[[rule]]
+id = "systemd.start-limit"
+title = "systemd gave up restarting {unit}"
+examples = [
+  'Nov 04 10:00:09 web-1 systemd[1]: kedai.service: Start request repeated too quickly.',
+  "Nov 04 10:00:09 web-1 systemd[1]: kedai.service: Failed with result 'start-limit-hit'.",
+]
+severity = "critical"
+priority = 16
+tags = ["systemd", "linux"]
+contains = ["start request repeated too quickly", "start-limit-hit"]
+regex = '(\S+\.service):'
+captures = ["unit"]
+explain = """
+{unit} kept failing right after starting, so systemd stopped restarting it (by default after 5 starts in 10 \
+seconds). It stays down until someone starts it again. The real error is in the attempts before this."""
+fix = [
+  "Find why it fails: journalctl -u {unit} -n 200 --no-pager",
+  "After fixing it: systemctl reset-failed {unit} && systemctl start {unit}",
+]
+
+[[rule]]
+id = "cron.job-failed"
+title = "A cron job failed (exit status {status})"
+examples = [
+  'Nov 04 02:00:01 web-1 CRON[4121]: (CRON) error (grandchild #4123 failed with exit status 1)',
+]
+severity = "error"
+priority = 15
+tags = ["cron", "linux"]
+contains = ["(cron) error (grandchild"]
+regex = 'failed with exit status (\d+)'
+captures = ["status"]
+explain = """
+A command run by cron ended with exit status {status}. cron itself logs nothing more: the job's own output \
+went to the user's mail, or was thrown away when no mail program is installed ("No MTA installed")."""
+fix = [
+  "Find the job: the CRON line with the same process just before this one shows its command.",
+  "Send its output somewhere you can read: append >> /var/log/<job>.log 2>&1 to the crontab line.",
+  "cron runs with a minimal PATH and environment; use full paths and set the variables the job needs.",
+]
+
+[[rule]]
+id = "clock.skew"
+title = "This machine's clock is off"
+examples = [
+  'com.amazonaws.services.s3.model.AmazonS3Exception: The difference between the request time and the current time is too large. (Service: Amazon S3; Status Code: 403; Error Code: RequestTimeTooSkewed)',
+  'KrbException: Clock skew too great (37)',
+]
+severity = "error"
+priority = 18
+tags = ["time", "auth"]
+contains = ["requesttimetooskewed", "clock skew too great", "signature expired: is now earlier than", "token used before issued", "jwt before use time"]
+explain = """
+A request was signed or stamped with this machine's time, and the other side refused it because the time is \
+too far from its own. Cloud APIs allow about 5 minutes; Kerberos and tokens are similar."""
+fix = [
+  "Check the clock: timedatectl (look for 'System clock synchronized: yes').",
+  "Turn on time sync: sudo timedatectl set-ntp true (chrony or systemd-timesyncd).",
+  "In a VM or container, the host's clock is the one to fix.",
+]

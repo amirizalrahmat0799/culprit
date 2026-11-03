@@ -1,0 +1,220 @@
+# Message brokers: Kafka (Java client, Spring Kafka) and RabbitMQ (Java client, Spring AMQP).
+
+# ---- Kafka --------------------------------------------------------------------------------------------
+
+[[rule]]
+id = "kafka.broker-unavailable"
+title = "Kafka broker {broker} is not reachable"
+examples = [
+  '2026-10-28T09:41:12.004+08:00  WARN 1 --- [kedai] [| adminclient-1] org.apache.kafka.clients.NetworkClient   : [AdminClient clientId=adminclient-1] Connection to node -1 (localhost/127.0.0.1:9092) could not be established. Node may not be available.',
+  '2026-10-28 09:41:12,004 WARN [Consumer clientId=orders-1, groupId=orders] Connection to node 1 (kafka/172.18.0.4:9092) could not be established. Broker may not be available. (org.apache.kafka.clients.NetworkClient)',
+]
+severity = "error"
+symptom = true
+priority = 15
+tags = ["kafka", "messaging", "connections"]
+contains = ["could not be established. broker may not be available", "could not be established. node may not be available"]
+regex = 'Connection to node -?\d+ \(([^)]+)\) could not be established'
+captures = ["broker"]
+explain = """
+The Kafka client tried to connect to {broker} and nothing answered. Kafka is down or still starting, the \
+address is wrong, or the broker advertises an address the client can't reach (common with Docker: the \
+broker says "localhost:9092" to clients in other containers)."""
+fix = [
+  "Check the broker is running and listening: nc -vz <host> 9092.",
+  "Check bootstrap.servers (spring.kafka.bootstrap-servers) points at the broker, not at localhost from inside a container.",
+  "With Docker, set the broker's advertised.listeners to an address the clients can reach (the service name, e.g. kafka:9092).",
+]
+
+[[rule]]
+id = "kafka.topic-missing"
+title = "Kafka topic {topic} not found"
+examples = [
+  '2026-10-28T09:41:13.220+08:00  WARN 1 --- [kedai] [ad | producer-1] org.apache.kafka.clients.NetworkClient   : [Producer clientId=producer-1] Error while fetching metadata with correlation id 4 : {orders=UNKNOWN_TOPIC_OR_PARTITION}',
+  'org.apache.kafka.common.errors.TimeoutException: Topic orders not present in metadata after 60000 ms.',
+]
+severity = "error"
+priority = 15
+tags = ["kafka", "messaging"]
+contains = ["unknown_topic_or_partition", "not present in metadata after"]
+regex = '(?:\{|Topic )([A-Za-z0-9._-]+)(?:=UNKNOWN_TOPIC_OR_PARTITION| not present in metadata)'
+captures = ["topic"]
+explain = """
+The client asked the brokers about a topic they don't have. Either the topic was never created (and the \
+brokers don't create topics automatically), its name is spelled differently, or the client is connected to \
+another cluster. A producer waits for the topic until max.block.ms (60 s by default), then fails with \
+"not present in metadata"; that also happens when no broker is reachable at all, so look for "could not be \
+established" warnings first."""
+fix = [
+  "List the topics: kafka-topics.sh --bootstrap-server <broker> --list",
+  "Create it: kafka-topics.sh --bootstrap-server <broker> --create --topic <name> --partitions 3 --replication-factor 1",
+  "In Spring, declare it as a NewTopic bean so it's created at startup.",
+  "If the topic exists, check the client is connected to the right cluster and that the name matches exactly.",
+]
+
+[[rule]]
+id = "kafka.commit-failed-rebalance"
+title = "Kafka consumer lost its partitions before committing"
+examples = [
+  'org.apache.kafka.clients.consumer.CommitFailedException: Offset commit cannot be completed since the consumer is not part of an active group for auto partition assignment; it is likely that the consumer was kicked out of the group.',
+  'org.apache.kafka.clients.consumer.CommitFailedException: Commit cannot be completed since the group has already rebalanced and assigned the partitions to another member. This means that the time between subsequent calls to poll() was longer than the configured max.poll.interval.ms',
+]
+severity = "error"
+priority = 15
+tags = ["kafka", "messaging", "consumers"]
+contains = ["commitfailedexception"]
+explain = """
+The consumer took longer than max.poll.interval.ms (5 minutes by default) between two polls, so the group \
+decided it was dead and gave its partitions to another consumer. Its commit was refused, and the records it \
+was working on will be processed again by the new owner: expect duplicates."""
+fix = [
+  "Process each batch faster, or fetch fewer records per poll (max.poll.records).",
+  "Raise max.poll.interval.ms if a batch really needs more time.",
+  "Make the processing idempotent, so records handled twice don't do damage.",
+]
+
+[[rule]]
+id = "kafka.offset-out-of-range"
+title = "Kafka consumer's position is no longer in the log"
+examples = [
+  'org.apache.kafka.clients.consumer.OffsetOutOfRangeException: Fetch position FetchPosition{offset=1205, offsetEpoch=Optional.empty, currentLeader=LeaderAndEpoch{leader=Optional[kafka:9092 (id: 1 rack: null)], epoch=0}} is out of range for partition orders-0',
+]
+severity = "warning"
+priority = 15
+tags = ["kafka", "messaging", "consumers"]
+contains = ["offsetoutofrangeexception", "is out of range for partition"]
+explain = """
+The consumer group's saved position points at records the broker no longer has, usually because retention \
+deleted them while the consumer was stopped or far behind. With auto.offset.reset=none the consumer stops; \
+otherwise it jumps to the earliest or latest record, and the records in between are skipped."""
+fix = [
+  "Decide where to resume: kafka-consumer-groups.sh --reset-offsets --to-earliest (or --to-latest) for the group.",
+  "If consumers fall behind regularly, raise the topic's retention or add consumers.",
+  "Check the lag: kafka-consumer-groups.sh --bootstrap-server <broker> --describe --group <group>",
+]
+
+[[rule]]
+id = "kafka.record-too-large"
+title = "Kafka message is bigger than allowed"
+examples = [
+  'org.apache.kafka.common.errors.RecordTooLargeException: The message is 2097254 bytes when serialized which is larger than 1048576, which is the value of the max.request.size configuration.',
+  'org.apache.kafka.common.errors.RecordTooLargeException: The request included a message larger than the max message size the server will accept.',
+]
+severity = "error"
+priority = 15
+tags = ["kafka", "messaging", "producers"]
+contains = ["recordtoolargeexception"]
+explain = """
+A producer sent a message bigger than the limit: the producer's max.request.size, or the broker's or topic's \
+message.max.bytes (both about 1 MB by default). The message wasn't sent."""
+fix = [
+  "Keep messages small: send a reference (an id, or an object storage URL) instead of a large payload.",
+  "Or compress: compression.type=zstd (or lz4) on the producer.",
+  "If large messages are really needed, raise max.request.size on the producer, max.message.bytes on the topic, and max.partition.fetch.bytes on the consumers together.",
+]
+
+[[rule]]
+id = "kafka.deserialization"
+title = "Kafka consumer can't read a record"
+examples = [
+  'org.apache.kafka.common.errors.RecordDeserializationException: Error deserializing key/value for partition orders-0 at offset 42. If needed, please seek past the record to continue consumption.',
+  "org.springframework.kafka.support.serializer.DeserializationException: failed to deserialize; nested exception is org.apache.kafka.common.errors.SerializationException: Can't deserialize data [[123, 34]] from topic [orders]",
+]
+severity = "error"
+priority = 15
+tags = ["kafka", "messaging", "consumers"]
+contains = ["error deserializing key/value for partition", "deserializationexception", "can't deserialize data"]
+explain = """
+A record on the topic isn't in the format the consumer expects: a producer wrote JSON where Avro was expected, \
+an old or new schema version, or plain text. Without an error handler the consumer stops at this record and \
+retries it forever (a "poison pill")."""
+fix = [
+  "Find what wrote the record: kafka-console-consumer.sh --topic <topic> --partition <p> --offset <offset> --max-messages 1",
+  "In Spring Kafka, wrap the deserializer in ErrorHandlingDeserializer and send bad records to a dead-letter topic.",
+  "Make producers and consumers agree on the format, ideally with a schema registry.",
+]
+
+# ---- RabbitMQ -----------------------------------------------------------------------------------------
+
+[[rule]]
+id = "rabbitmq.connection-refused"
+title = "RabbitMQ is not reachable"
+examples = [
+  "2026-10-28T09:41:12.552+08:00 ERROR 1 --- [kedai] [ntContainer#0-1] o.s.a.r.l.SimpleMessageListenerContainer : Failed to check/redeclare auto-delete queue(s).\norg.springframework.amqp.AmqpConnectException: java.net.ConnectException: Connection refused",
+]
+severity = "error"
+symptom = true
+priority = 15
+tags = ["rabbitmq", "messaging", "connections"]
+contains = ["amqpconnectexception"]
+explain = """
+The app couldn't open a connection to RabbitMQ: it's down or still starting, or the host or port (5672 by \
+default) is wrong."""
+fix = [
+  "Check RabbitMQ is running: rabbitmq-diagnostics ping (or the container's status and logs).",
+  "Check spring.rabbitmq.host and port; inside Docker use the service name, not localhost.",
+  "If RabbitMQ starts after the app, the listener retries; make the app wait for it in Compose with a healthcheck.",
+]
+
+[[rule]]
+id = "rabbitmq.access-refused"
+title = "RabbitMQ refused the login"
+examples = [
+  'com.rabbitmq.client.AuthenticationFailureException: ACCESS_REFUSED - Login was refused using authentication mechanism PLAIN. For details see the broker logfile.',
+]
+severity = "critical"
+priority = 15
+tags = ["rabbitmq", "messaging", "auth"]
+contains = ["access_refused"]
+explain = """
+RabbitMQ rejected the username or password, or the user has no permission on the virtual host. Note that the \
+default guest user may only connect from localhost, so it's refused from another container or machine."""
+fix = [
+  "Check spring.rabbitmq.username, password and virtual-host.",
+  "List users and permissions: rabbitmqctl list_users; rabbitmqctl list_permissions -p <vhost>",
+  "Don't use guest outside localhost; create a user: rabbitmqctl add_user, then set_permissions.",
+]
+
+[[rule]]
+id = "rabbitmq.inequivalent-arg"
+title = "RabbitMQ {kind} {name} already exists with other settings"
+examples = [
+  "Shutdown Signal: channel error; protocol method: #method<channel.close>(reply-code=406, reply-text=PRECONDITION_FAILED - inequivalent arg 'x-dead-letter-exchange' for queue 'orders' in vhost '/': received the value 'dlx' of type 'longstr' but current is none, class-id=50, method-id=10)",
+]
+severity = "error"
+priority = 16
+tags = ["rabbitmq", "messaging"]
+contains = ["precondition_failed - inequivalent arg"]
+regex = "inequivalent arg '([^']+)' for (queue|exchange) '([^']+)'"
+captures = ["argument", "kind", "name"]
+explain = """
+The app declares the {kind} {name} with {argument} set differently from the {kind} that already exists. \
+RabbitMQ never changes an existing {kind}'s settings, so it refuses the declaration, and the listener or \
+sender that needed it fails."""
+fix = [
+  "Make the declaration match the existing {kind}, or delete it so it's created again (its messages are lost): rabbitmqctl delete_queue {name}",
+  "For a change without losing messages, declare a new {kind} with the new settings and move consumers to it.",
+  "Or set the argument with a policy (rabbitmqctl set_policy) instead of in code; policies can change.",
+]
+
+[[rule]]
+id = "rabbitmq.not-found"
+title = "RabbitMQ {kind} {name} doesn't exist"
+examples = [
+  "Shutdown Signal: channel error; protocol method: #method<channel.close>(reply-code=404, reply-text=NOT_FOUND - no queue 'orders' in vhost '/', class-id=50, method-id=10)",
+  "Channel shutdown: channel error; protocol method: #method<channel.close>(reply-code=404, reply-text=NOT_FOUND - no exchange 'payments' in vhost '/', class-id=60, method-id=40)",
+]
+severity = "error"
+priority = 16
+tags = ["rabbitmq", "messaging"]
+contains = ["not_found - no queue", "not_found - no exchange"]
+regex = "NOT_FOUND - no (queue|exchange) '([^']+)'"
+captures = ["kind", "name"]
+explain = """
+The app used the {kind} {name}, and nothing declared it in this virtual host. Usually the service that \
+should declare it hasn't started yet, or declares it in another vhost or under another name."""
+fix = [
+  "Declare the {kind} where it's used (a Queue or Exchange bean in Spring), so start order doesn't matter.",
+  "Check the virtual host and the name match on both sides.",
+  "List what exists: rabbitmqctl list_queues -p <vhost> / list_exchanges -p <vhost>",
+]

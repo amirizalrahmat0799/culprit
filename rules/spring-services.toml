@@ -1,0 +1,354 @@
+# Spring between services: HTTP clients (OpenFeign, RestTemplate, RestClient, WebClient), Resilience4j,
+# Spring Cloud (Config, Eureka, LoadBalancer), Spring Security and JWTs, uploads, executors, health checks.
+
+# ---- calls to other services --------------------------------------------------------------------------
+
+[[rule]]
+id = "feign.timeout"
+title = "Call to {url} timed out ({method})"
+examples = [
+  'feign.RetryableException: Read timed out executing GET http://inventory/api/items/42',
+  'feign.RetryableException: Connection refused executing POST http://payments:8080/api/charges',
+]
+severity = "error"
+symptom = true
+priority = 15
+tags = ["java", "spring", "feign", "http"]
+contains = ["feign.retryableexception"]
+regex = 'RetryableException: (.+?) executing (GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) (\S+)'
+captures = ["reason", "method", "url"]
+explain = """
+An OpenFeign client called {url} and got no answer: {reason}. The service behind it is down, overloaded or \
+slow, or the address is wrong. Look for that service's own errors at the same time."""
+fix = [
+  "Check the other service is up and answers: curl -v {url}",
+  "Look at its logs around this time; this error is usually its problem showing up here.",
+  "Set timeouts that fit the call (spring.cloud.openfeign.client.config.<name>.read-timeout) and add a fallback or circuit breaker for calls that can fail.",
+]
+
+[[rule]]
+id = "feign.downstream-error"
+title = "{url} answered {status}"
+examples = [
+  'feign.FeignException$ServiceUnavailable: [503 Service Unavailable] during [GET] to [http://inventory/api/items/42] [InventoryClient#item(Long)]: [no healthy upstream]',
+  'feign.FeignException$NotFound: [404] during [GET] to [http://inventory/api/items/42] [InventoryClient#item(Long)]: [{"error":"not found"}]',
+]
+severity = "error"
+symptom = true
+priority = 15
+tags = ["java", "spring", "feign", "http"]
+contains = ["feign.feignexception"]
+regex = 'FeignException\$\w+: \[(\d{3})[^\]]*\] during \[(\w+)\] to \[([^\]]+)\]'
+captures = ["status", "method", "url"]
+explain = """
+An OpenFeign client called {method} {url} and the other service answered {status}. A 5xx means that service \
+failed; a 4xx means it refused this request (wrong id, missing permission, bad data)."""
+fix = [
+  "For 5xx, look at the other service's log at this time: the cause is there.",
+  "For 4xx, check what this service sent: the URL, the body, the auth header.",
+  "Decide what this service should do when the call fails: retry, fall back, or return a clear error.",
+]
+
+[[rule]]
+id = "resttemplate.downstream-error"
+title = "Another service answered {status}"
+examples = [
+  'org.springframework.web.client.HttpServerErrorException$ServiceUnavailable: 503 Service Unavailable: "no healthy upstream"',
+  'org.springframework.web.client.HttpClientErrorException$Unauthorized: 401 Unauthorized: [no body]',
+]
+severity = "error"
+symptom = true
+priority = 15
+tags = ["java", "spring", "http"]
+contains = ["httpservererrorexception", "httpclienterrorexception"]
+regex = 'Http(?:Server|Client)ErrorException(?:\$\w+)?: (\d{3}[^:]*)'
+captures = ["status"]
+explain = """
+A RestTemplate or RestClient call got the answer {status} from another service. A 5xx means that service \
+failed; a 4xx means it refused this request."""
+fix = [
+  "For 5xx, look at the other service's log at this time.",
+  "For 401 or 403, check the token or credentials this service sends, and whether they expired.",
+  "For 404 or 400, check the URL and the request body this service builds.",
+]
+
+[[rule]]
+id = "resttemplate.io-error"
+title = "{method} {url} failed: {reason}"
+examples = [
+  'org.springframework.web.client.ResourceAccessException: I/O error on GET request for "http://inventory:8080/api/items": Read timed out',
+  'org.springframework.web.client.ResourceAccessException: I/O error on POST request for "http://payments:8080/charges": Connection refused',
+]
+severity = "error"
+symptom = true
+priority = 15
+tags = ["java", "spring", "http"]
+contains = ["resourceaccessexception: i/o error on"]
+regex = 'I/O error on (\w+) request for "([^"]+)": ([^;\n]+)'
+captures = ["method", "url", "reason"]
+explain = """
+A RestTemplate or RestClient call to {url} got no answer: {reason}. The other service is down, slow or \
+unreachable at that address."""
+fix = [
+  "Check the other service is up: curl -v {url}",
+  "Look at its log at this time.",
+  "Set connect and read timeouts on the client; the defaults wait a long time.",
+]
+
+[[rule]]
+id = "webclient.error"
+title = "WebClient call failed: {detail}"
+examples = [
+  'org.springframework.web.reactive.function.client.WebClientResponseException$ServiceUnavailable: 503 Service Unavailable from GET http://inventory/api/items',
+  'org.springframework.web.reactive.function.client.WebClientRequestException: Connection refused: inventory/172.18.0.5:8080',
+]
+severity = "error"
+symptom = true
+priority = 15
+tags = ["java", "spring", "webflux", "http"]
+contains = ["webclientresponseexception", "webclientrequestexception"]
+regex = 'WebClient(?:Response|Request)Exception(?:\$\w+)?: ([^\n]+)'
+captures = ["detail"]
+explain = """
+A WebClient call to another service failed: {detail}. A status from the other service means it answered with \
+an error; "Connection refused" or a timeout means it didn't answer at all."""
+fix = [
+  "Look at the other service's log at this time.",
+  "Handle the failure where the call is made (onStatus, onErrorResume) instead of letting it fail the request.",
+  "Set a response timeout on the HttpClient behind the WebClient.",
+]
+
+[[rule]]
+id = "resilience4j.circuit-open"
+title = "Circuit breaker {name} is open"
+examples = [
+  "io.github.resilience4j.circuitbreaker.CallNotPermittedException: CircuitBreaker 'inventory' is OPEN and does not permit further calls",
+]
+severity = "warning"
+symptom = true
+priority = 15
+tags = ["java", "resilience4j", "http"]
+contains = ["callnotpermittedexception", "is open and does not permit further calls"]
+regex = "CircuitBreaker '([^']+)' is (?:OPEN|FORCED_OPEN)"
+captures = ["name"]
+explain = """
+Too many calls through the circuit breaker {name} failed recently, so it stopped making calls for a while \
+and fails them at once instead. This protects the other service; the real problem is the failures before it \
+opened."""
+fix = [
+  "Look for the errors before this message: they're why it opened.",
+  "Check the service behind {name} is healthy again; the breaker closes on its own after waitDurationInOpenState.",
+  "Give the call a fallback so users get something useful while it's open.",
+]
+
+[[rule]]
+id = "resilience4j.bulkhead-full"
+title = "Bulkhead {name} is full"
+examples = [
+  "io.github.resilience4j.bulkhead.BulkheadFullException: Bulkhead 'payments' is full and does not permit further calls",
+]
+severity = "warning"
+priority = 15
+tags = ["java", "resilience4j"]
+contains = ["bulkheadfullexception"]
+regex = "Bulkhead '([^']+)' is full"
+captures = ["name"]
+explain = """
+The bulkhead {name} limits how many calls run at once, and all its slots were busy, so this call was \
+refused. Usually the calls behind it got slow, so each one holds its slot longer."""
+fix = [
+  "Check how long the calls behind {name} take now; slow calls fill a bulkhead.",
+  "Raise maxConcurrentCalls only if the service behind it can take more.",
+]
+
+[[rule]]
+id = "spring-cloud.no-instances"
+title = "No running instance of {service}"
+examples = [
+  '2026-10-28T09:41:15.010+08:00  WARN 1 --- [kedai] [nio-8080-exec-3] o.s.c.l.core.RoundRobinLoadBalancer      : No servers available for service: inventory',
+]
+severity = "error"
+symptom = true
+priority = 15
+tags = ["java", "spring-cloud", "discovery"]
+contains = ["no servers available for service", "load balancer does not contain an instance for the service", "load balancer does not have available server for client"]
+regex = '(?:service|client):? (\S+)'
+captures = ["service"]
+explain = """
+Spring Cloud LoadBalancer looked up {service} in service discovery (Eureka, Consul, Kubernetes) and found no \
+healthy instance, so the call couldn't be made."""
+fix = [
+  "Check {service} is running and registered (the Eureka dashboard, or kubectl get endpoints {service}).",
+  "Check the name matches exactly what {service} registers as (spring.application.name).",
+  "If {service} just started, it takes a heartbeat or two to appear; retry with a backoff.",
+]
+
+[[rule]]
+id = "eureka.unreachable"
+title = "Eureka server is not reachable"
+examples = [
+  '2026-10-28T09:41:20.110+08:00 ERROR 1 --- [kedai] [tbeatExecutor-0] com.netflix.discovery.DiscoveryClient    : DiscoveryClient_ORDERS/orders:8080 - was unable to send heartbeat!',
+  'com.netflix.discovery.shared.transport.TransportException: Cannot execute request on any known server',
+]
+severity = "error"
+symptom = true
+priority = 15
+tags = ["java", "spring-cloud", "eureka", "discovery"]
+contains = ["was unable to send heartbeat", "cannot execute request on any known server", "was unable to refresh its cache"]
+explain = """
+The service couldn't talk to the Eureka server, so it can't register or learn where other services are. \
+Calls to other services start failing once its cached list is out of date."""
+fix = [
+  "Check Eureka is up: open its dashboard, or curl <eureka>/eureka/apps",
+  "Check eureka.client.service-url.defaultZone in this service.",
+  "In Docker or Kubernetes, use the Eureka service name, not localhost.",
+]
+
+[[rule]]
+id = "spring-cloud.config-unreachable"
+title = "Can't get configuration from the config server"
+examples = [
+  'java.lang.IllegalStateException: Could not locate PropertySource and the resource is not optional, failing',
+  "2026-10-28T09:41:02.512+08:00  WARN 1 --- [kedai] [           main] o.s.c.c.c.ConfigServerConfigDataLoader   : Could not locate PropertySource ([ConfigServerConfigDataResource@1c2b3a uris = array<String>['http://config:8888'], optional = false, profiles = 'prod']): I/O error on GET request for \"http://config:8888/kedai/prod\": Connection refused",
+]
+severity = "critical"
+priority = 15
+tags = ["java", "spring-cloud", "config", "startup"]
+contains = ["could not locate propertysource"]
+explain = """
+The app gets its configuration from Spring Cloud Config Server at startup, couldn't reach it (or it has \
+nothing for this application and profile), and the import isn't optional, so the app stops."""
+fix = [
+  "Check the config server is up: curl <config-server>/<application>/<profile>",
+  "Check spring.config.import (configserver:http://...) and spring.application.name.",
+  "Start the config server first (depends_on with a healthcheck), or let the app retry: spring.cloud.config.retry and spring.cloud.config.fail-fast=true.",
+]
+
+# ---- security ----------------------------------------------------------------------------------------
+
+[[rule]]
+id = "spring-security.access-denied"
+title = "Spring Security denied access"
+examples = [
+  'org.springframework.security.authorization.AuthorizationDeniedException: Access Denied',
+  'org.springframework.security.access.AccessDeniedException: Access Denied',
+]
+severity = "warning"
+priority = 12
+tags = ["java", "spring", "security"]
+contains = ["authorizationdeniedexception", "security.access.accessdeniedexception"]
+explain = """
+A request reached a URL or method that needs a role or permission the caller doesn't have (an @PreAuthorize, \
+hasRole, or requestMatchers rule), and was answered 403. For one user it's expected; for everyone it's a \
+configuration mistake."""
+fix = [
+  "Check the rule that protects this URL or method, and the roles the user's token or session really has.",
+  "Spring adds ROLE_ to hasRole names: hasRole(\"ADMIN\") needs the authority ROLE_ADMIN.",
+  "For a POST from a browser, a missing CSRF token is also answered 403; check the request sends one.",
+]
+
+[[rule]]
+id = "jwt.expired"
+title = "A JWT had expired"
+examples = [
+  'io.jsonwebtoken.ExpiredJwtException: JWT expired 3600000 milliseconds ago at 2026-10-28T01:41:02.000Z. Current time: 2026-10-28T02:41:02.000Z. Allowed clock skew: 0 milliseconds.',
+  'org.springframework.security.oauth2.jwt.JwtValidationException: An error occurred while attempting to decode the Jwt: Jwt expired at 2026-10-28T01:41:02Z',
+]
+severity = "warning"
+priority = 15
+tags = ["java", "security", "jwt"]
+contains = ["expiredjwtexception", "jwt expired"]
+explain = """
+A request came with a token past its expiry time, and was refused (401). A few are normal: clients should \
+refresh their token. Many at once mean clients don't refresh, tokens live too short, or this server's clock \
+is ahead."""
+fix = [
+  "Make clients refresh the token before it expires, or on a 401.",
+  "If tokens fail right after they're issued, compare the clocks of the issuer and this server (timedatectl, NTP).",
+  "Allow a little clock skew in the validator (a minute is common).",
+]
+
+[[rule]]
+id = "jwt.bad-signature"
+title = "A JWT's signature doesn't match"
+examples = [
+  'io.jsonwebtoken.security.SignatureException: JWT signature does not match locally computed signature. JWT validity cannot be asserted and should not be trusted.',
+  'org.springframework.security.oauth2.server.resource.InvalidBearerTokenException: An error occurred while attempting to decode the Jwt: Signed JWT rejected: Invalid signature',
+]
+severity = "error"
+priority = 15
+tags = ["java", "security", "jwt"]
+contains = ["jwt signature does not match", "signed jwt rejected: invalid signature", "another algorithm expected, or no matching key(s) found"]
+explain = """
+The token wasn't signed with the key this server checks against. Either the issuer and this server use \
+different secrets or keys (different environments, a rotated key), or the token was tampered with."""
+fix = [
+  "Check this server's key or JWK set URI (spring.security.oauth2.resourceserver.jwt.jwk-set-uri / issuer-uri) is the issuer's.",
+  "With a shared secret, check both sides use the same one in this environment.",
+  "After rotating keys, make sure the old key is still published until old tokens expire.",
+]
+
+# ---- requests and threads ----------------------------------------------------------------------------
+
+[[rule]]
+id = "spring.upload-too-large"
+title = "Upload bigger than the configured maximum"
+examples = [
+  'org.springframework.web.multipart.MaxUploadSizeExceededException: Maximum upload size exceeded',
+  'org.apache.tomcat.util.http.fileupload.impl.SizeLimitExceededException: the request was rejected because its size (15728640) exceeds the configured maximum (10485760)',
+]
+severity = "warning"
+priority = 15
+tags = ["java", "spring", "uploads"]
+contains = ["maxuploadsizeexceededexception", "exceeds the configured maximum", "filesizelimitexceededexception"]
+explain = """
+Someone uploaded a file (or a whole request) bigger than the app allows: 1 MB per file and 10 MB per \
+request by default in Spring Boot."""
+fix = [
+  "If bigger files are expected, raise spring.servlet.multipart.max-file-size and max-request-size.",
+  "Raise the limit in front of the app too (nginx client_max_body_size), or it refuses first.",
+  "Return a clear error to the user instead of a 500: handle MaxUploadSizeExceededException.",
+]
+
+[[rule]]
+id = "java.task-rejected"
+title = "Thread pool full: a task was rejected"
+examples = [
+  'org.springframework.core.task.TaskRejectedException: Executor [java.util.concurrent.ThreadPoolExecutor@6d3af739[Running, pool size = 8, active threads = 8, queued tasks = 100, completed tasks = 4512]] did not accept task: org.springframework.aop.interceptor.AsyncExecutionInterceptor$$Lambda$1471/0x0000000800f6a8c8@3b2e1d4f',
+  'java.util.concurrent.RejectedExecutionException: Task java.util.concurrent.FutureTask@5e9f23b4 rejected from java.util.concurrent.ThreadPoolExecutor@6d3af739[Running, pool size = 8, active threads = 8, queued tasks = 100, completed tasks = 4512]',
+]
+severity = "error"
+priority = 15
+tags = ["java", "threads"]
+contains = ["taskrejectedexception", "rejectedexecutionexception"]
+explain = """
+All the pool's threads were busy and its queue was full, so a new task (an @Async method, a scheduled job, \
+a callback) was refused. The work is usually slower than it should be, or arrives faster than the pool can \
+handle."""
+fix = [
+  "Find what the busy threads are doing: a thread dump (jstack, or /actuator/threaddump) while it happens.",
+  "Slow work blocking on I/O (a database, another service) is the usual cause; add timeouts there first.",
+  "Then size the pool and queue (spring.task.execution.pool.*) for the load, or pick a rejection policy such as CallerRunsPolicy.",
+]
+
+[[rule]]
+id = "spring.health-check-failed"
+title = "{component} health check failed"
+examples = [
+  '2026-10-28T09:41:30.004+08:00  WARN 1 --- [kedai] [nio-8081-exec-1] o.s.b.a.data.redis.RedisHealthIndicator  : Redis health check failed',
+  '2026-10-28T09:41:30.006+08:00  WARN 1 --- [kedai] [nio-8081-exec-1] o.s.b.a.jdbc.DataSourceHealthIndicator   : DataSource health check failed',
+]
+severity = "warning"
+symptom = true
+priority = 12
+tags = ["java", "spring", "actuator"]
+contains = ["health check failed"]
+regex = '(\w+) health check failed'
+captures = ["component"]
+explain = """
+Spring Boot Actuator checked {component} for /actuator/health and it failed, so the app reports DOWN. A load \
+balancer or Kubernetes may stop sending it traffic, or restart it."""
+fix = [
+  "The exception right under this message says why {component} failed; fix that.",
+  "Keep checks of things the app can work without out of the readiness and liveness groups, so one slow dependency doesn't restart every instance.",
+]

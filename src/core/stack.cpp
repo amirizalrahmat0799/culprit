@@ -25,7 +25,7 @@ int to_int(std::string_view s) {
 }
 
 // Java packages that are never "your code"
-constexpr std::array<std::string_view, 33> kJavaLibraries = {
+constexpr std::array<std::string_view, 46> kJavaLibraries = {
     "java.",          "javax.",          "jakarta.",        "jdk.",           "sun.",
     "com.sun.",       "kotlin.",         "kotlinx.",        "scala.",         "groovy.",
     "org.springframework.", "org.apache.", "org.hibernate.", "org.eclipse.",  "org.junit.",
@@ -33,6 +33,10 @@ constexpr std::array<std::string_view, 33> kJavaLibraries = {
     "reactor.",       "io.micrometer.",  "org.postgresql.", "com.mysql.",     "org.h2.",
     "com.fasterxml.", "tools.jackson.",  "io.undertow.",    "org.flywaydb.",  "org.aspectj.",
     "net.bytebuddy.", "feign.",          "io.grpc.",
+    // clients for brokers, caches and other databases, and the libraries around calls between services
+    "io.lettuce.",    "redis.clients.",  "org.redisson.",   "com.rabbitmq.",  "com.mongodb.",
+    "org.mongodb.",   "com.microsoft.sqlserver.", "org.elasticsearch.", "co.elastic.", "io.github.resilience4j.",
+    "com.netflix.",   "io.jsonwebtoken.", "com.nimbusds.",
 };
 
 bool java_library(std::string_view function) {

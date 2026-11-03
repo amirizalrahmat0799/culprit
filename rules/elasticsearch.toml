@@ -1,0 +1,86 @@
+# Elasticsearch and OpenSearch: errors from the server log and from clients.
+
+[[rule]]
+id = "elasticsearch.flood-stage"
+title = "Elasticsearch made indices read-only: the disk is nearly full"
+examples = [
+  'org.elasticsearch.cluster.block.ClusterBlockException: index [orders] blocked by: [TOO_MANY_REQUESTS/12/disk usage exceeded flood-stage watermark, index has read-only-allow-delete block];',
+  '[2026-11-04T10:00:00,123][WARN ][o.e.c.r.a.DiskThresholdMonitor] [es-1] flood stage disk watermark [95%] exceeded on [Xy1z][es-1][/usr/share/elasticsearch/data] free: 2.1gb[4.2%], all indices on this node will be marked read-only',
+  'index [orders] blocked by: [FORBIDDEN/12/index read-only / allow delete (api)];',
+]
+severity = "critical"
+priority = 18
+tags = ["elasticsearch", "disk"]
+contains = ["flood-stage watermark", "flood stage disk watermark", "read-only / allow delete", "read-only-allow-delete"]
+explain = """
+A data node's disk passed the flood-stage watermark (95% by default), so Elasticsearch blocked writes to \
+every index with a shard on it. Searches still work; indexing fails until there's room. Recent versions lift \
+the block on their own once usage drops below the high watermark."""
+fix = [
+  "See the disk use per node: GET _cat/allocation?v",
+  "Free space: delete old indices (or let ILM do it), or add disk or nodes.",
+  "On old versions, remove the block afterwards: PUT */_settings with index.blocks.read_only_allow_delete set to null.",
+]
+
+[[rule]]
+id = "elasticsearch.circuit-breaker"
+title = "Elasticsearch refused a request to protect its memory"
+examples = [
+  'org.elasticsearch.common.breaker.CircuitBreakingException: [parent] Data too large, data for [<http_request>] would be [1031270400/983.4mb], which is larger than the limit of [1020054732/972.7mb], real usage: [1031270160/983.4mb], new bytes reserved: [240/240b], usages [request=0/0b, fielddata=0/0b, in_flight_requests=240/240b]',
+]
+severity = "error"
+priority = 18
+tags = ["elasticsearch", "memory"]
+contains = ["circuitbreakingexception", "data too large, data for"]
+explain = """
+Answering the request would have pushed a node's JVM heap over a circuit-breaker limit, so Elasticsearch \
+refused it instead of running out of memory. The heap is too small for the load, or one request (a huge \
+aggregation, a deep page, a big bulk) asks for too much."""
+fix = [
+  "See heap use: GET _nodes/stats/breaker and GET _cat/nodes?v&h=name,heap.percent",
+  "Make the heavy requests smaller: smaller bulk batches, fewer aggregation buckets, search_after instead of deep from/size.",
+  "Give the nodes more heap (up to half the machine's memory, at most about 31 GB), or add nodes.",
+]
+
+[[rule]]
+id = "elasticsearch.mapping-conflict"
+title = "Elasticsearch can't index field {field} with its mapping"
+examples = [
+  "ElasticsearchStatusException[Elasticsearch exception [type=mapper_parsing_exception, reason=failed to parse field [price] of type [long] in document with id '42'. Preview of field's value: 'RM 12.50']]",
+  'type=illegal_argument_exception, reason=mapper [status] cannot be changed from type [keyword] to [long]',
+]
+severity = "error"
+priority = 18
+tags = ["elasticsearch", "mapping"]
+contains = ["mapper_parsing_exception", "failed to parse field", "cannot be changed from type"]
+regex = '(?:failed to parse field|mapper) \[([^\]]+)\]'
+captures = ["field"]
+explain = """
+A document's {field} doesn't fit the index's mapping for it: text in a number field, an object where a \
+string was mapped, or a mapping change Elasticsearch can't make on an existing field. The document wasn't \
+indexed."""
+fix = [
+  "See the mapping: GET <index>/_mapping/field/{field}",
+  "Fix the data at the source, or map the field explicitly with an index template before the first document arrives.",
+  "To change a field's type, create a new index with the new mapping and reindex into it (_reindex), then switch an alias.",
+]
+
+[[rule]]
+id = "elasticsearch.all-shards-failed"
+title = "Elasticsearch search failed on every shard"
+examples = [
+  'ElasticsearchStatusException[Elasticsearch exception [type=search_phase_execution_exception, reason=all shards failed]]',
+]
+severity = "error"
+priority = 12
+tags = ["elasticsearch", "search"]
+contains = ["all shards failed"]
+explain = """
+The search couldn't run on any shard. Usually the query itself is invalid for the mapping (sorting or \
+aggregating on a text field, a bad date format), and every shard rejected it the same way; sometimes the \
+index's shards are unassigned."""
+fix = [
+  "The cause is in the exception's caused_by or root_cause; read it in the full response or the server log.",
+  "Sorting or aggregating on text needs a keyword field (often <field>.keyword).",
+  "Check the index is healthy: GET _cluster/health/<index> and GET _cat/shards/<index>?v",
+]

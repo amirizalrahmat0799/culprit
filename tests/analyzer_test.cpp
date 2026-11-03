@@ -111,3 +111,24 @@ TEST("numbers with units group together whatever their length") {
     CHECK_EQ(normalize_message("upload of 3MB rejected"), normalize_message("upload of 120MB rejected"));
     CHECK_EQ(normalize_message("failed after 82ms"), std::string("failed after #ms"));
 }
+
+TEST("analyzer: Redis running out of memory is the root cause of the failed checkouts that follow") {
+    Report r = analyse_file("incident-redis.log");
+    CHECK(r.root.has_value());
+    if (!r.root) return;
+    CHECK(r.root->kind == RootCause::Kind::Problem);
+    CHECK(r.root->confidence == RootCause::Confidence::High);
+    const Problem& cause = r.problems[r.root->index];
+    CHECK_EQ(cause.rule->id, std::string("redis.oom"));
+    CHECK_EQ(cause.count, 3u);
+    CHECK_EQ(cause.first.source, std::string("cart-1"));
+    // the Lettuce client is a library: the first frame in your code is the cart service
+    CHECK(cause.where.has_value() && cause.where->file == "CartService.java" && cause.where->line == 58);
+    // what followed: the other service's 500s through Feign, the breaker opening, nginx's 500s and 503s
+    CHECK(r.root->followers >= 6);
+    const Problem* feign = find(r, "feign.downstream-error");
+    CHECK(feign && feign->count == 2 && feign->rule->symptom);
+    const Problem* breaker = find(r, "resilience4j.circuit-open");
+    CHECK(breaker && breaker->title() == "Circuit breaker cart is open");
+    CHECK(find(r, "spring.health-check-failed") != nullptr);
+}

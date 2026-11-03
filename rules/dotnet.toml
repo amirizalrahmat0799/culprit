@@ -1,0 +1,198 @@
+# .NET and ASP.NET Core: the runtime, dependency injection, Kestrel, Entity Framework Core, HttpClient.
+
+[[rule]]
+id = "dotnet.di-unresolved"
+title = "No service registered for {service}"
+examples = [
+  "System.InvalidOperationException: Unable to resolve service for type 'Shop.Orders.IOrderRepository' while attempting to activate 'Shop.Orders.OrderService'.",
+]
+severity = "critical"
+priority = 15
+tags = ["dotnet", "aspnetcore", "startup"]
+contains = ["unable to resolve service for type"]
+regex = "Unable to resolve service for type '([^']+)' while attempting to activate '([^']+)'"
+captures = ["service", "consumer"]
+explain = """
+{consumer} asks for {service} in its constructor, and nothing registered {service} with the dependency \
+injection container, so ASP.NET Core can't create {consumer}."""
+fix = [
+  "Register it in Program.cs: builder.Services.AddScoped<IOrderRepository, OrderRepository>() (or AddSingleton / AddTransient).",
+  "If it's registered, check it's the same interface (namespace and assembly) that {consumer} asks for.",
+  "A DbContext needs builder.Services.AddDbContext<...>(...).",
+]
+
+[[rule]]
+id = "dotnet.scoped-from-singleton"
+title = "A singleton uses the scoped service {service}"
+examples = [
+  "System.InvalidOperationException: Cannot consume scoped service 'Shop.Data.ShopContext' from singleton 'Shop.Orders.PriceCache'.",
+]
+severity = "critical"
+priority = 16
+tags = ["dotnet", "aspnetcore", "startup"]
+contains = ["cannot consume scoped service"]
+regex = "Cannot consume scoped service '([^']+)' from singleton '([^']+)'"
+captures = ["service", "singleton"]
+explain = """
+{singleton} lives for the whole app, and asks for {service}, which is meant to live for one request (a \
+DbContext usually is). It would keep one {service} forever, so ASP.NET Core refuses."""
+fix = [
+  "Make {singleton} scoped too, if nothing needs it to be a singleton.",
+  "Or inject IServiceScopeFactory and create a scope for each use: using var scope = factory.CreateScope();",
+]
+
+[[rule]]
+id = "dotnet.null-reference"
+title = "NullReferenceException"
+examples = [
+  "System.NullReferenceException: Object reference not set to an instance of an object.\n   at Shop.Orders.OrderService.PlaceAsync(Order order) in /src/Shop/Orders/OrderService.cs:line 87",
+]
+severity = "error"
+priority = 10
+tags = ["dotnet"]
+contains = ["system.nullreferenceexception"]
+explain = """
+Code used a member of something that was null. The first frame in your code in the stack trace is where; \
+the question is why the value was null there (not loaded, not found, not set)."""
+fix = [
+  "Open the first frame in your code and see which value on that line can be null.",
+  "Turn on nullable reference types (<Nullable>enable</Nullable>) so the compiler points at these.",
+  "Check for null where the value comes from: a FirstOrDefault, a lookup, a deserialized request.",
+]
+
+[[rule]]
+id = "dotnet.port-in-use"
+title = "Kestrel can't listen on {address}: it's taken"
+examples = [
+  'System.IO.IOException: Failed to bind to address http://127.0.0.1:5000: address already in use.',
+]
+severity = "critical"
+priority = 20
+tags = ["dotnet", "aspnetcore", "startup", "ports"]
+contains = ["failed to bind to address"]
+regex = 'Failed to bind to address (\S+?):? address already in use'
+captures = ["address"]
+explain = """
+Another process already listens on {address}: often another copy of this app still running, or another app \
+configured with the same port."""
+fix = [
+  "Find what has it: lsof -i :<port> (netstat -ano | findstr :<port> on Windows).",
+  "Stop it, or run on another port: ASPNETCORE_URLS=http://+:5001 (or --urls).",
+]
+
+[[rule]]
+id = "efcore.pending-model-changes"
+title = "EF Core model has changes without a migration"
+examples = [
+  "System.InvalidOperationException: An error was generated for warning 'Microsoft.EntityFrameworkCore.Migrations.PendingModelChangesWarning': The model for context 'ShopContext' has pending changes. Add a new migration before updating the database.",
+]
+severity = "critical"
+priority = 16
+tags = ["dotnet", "efcore", "migrations"]
+contains = ["pendingmodelchangeswarning", "has pending changes. add a new migration"]
+explain = """
+The entity classes changed since the last migration, so applying the migrations wouldn't produce the \
+schema the code expects. Since EF Core 9 this stops Migrate() and database update instead of being a \
+warning."""
+fix = [
+  "Add a migration for the change: dotnet ef migrations add <Name>, then apply it.",
+  "If no change is intended, check for values computed at runtime in HasData or defaults (DateTime.Now, Guid.NewGuid()); seed data must be constant.",
+]
+
+[[rule]]
+id = "efcore.concurrency"
+title = "EF Core: the row changed or vanished since it was read"
+examples = [
+  'Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException: The database operation was expected to affect 1 row(s), but actually affected 0 row(s); data may have been modified or deleted since entities were loaded.',
+]
+severity = "error"
+priority = 15
+tags = ["dotnet", "efcore"]
+contains = ["dbupdateconcurrencyexception"]
+explain = """
+SaveChanges updated or deleted a row and found it no longer matched: someone else changed it (its \
+concurrency token differs) or deleted it between loading and saving."""
+fix = [
+  "Decide what wins: reload and retry, or tell the user the data changed (catch DbUpdateConcurrencyException).",
+  "If no one else edits the row, check the entity's key and that it isn't attached twice.",
+]
+
+[[rule]]
+id = "dotnet.httpclient-timeout"
+title = "HttpClient call timed out after {seconds} s"
+examples = [
+  'System.Threading.Tasks.TaskCanceledException: The request was canceled due to the configured HttpClient.Timeout of 100 seconds elapsing.',
+]
+severity = "error"
+symptom = true
+priority = 15
+tags = ["dotnet", "http"]
+contains = ["httpclient.timeout of"]
+regex = 'HttpClient\.Timeout of (\d+(?:\.\d+)?) seconds'
+captures = ["seconds"]
+explain = """
+An HttpClient call to another service got no complete answer within {seconds} seconds. The service behind \
+it is slow, down, or unreachable."""
+fix = [
+  "Look at the other service's log at this time.",
+  "Set a timeout that fits the call (HttpClient.Timeout, or a Polly / Microsoft.Extensions.Http.Resilience policy) instead of the 100-second default.",
+  "Add a retry with backoff for transient failures, and a circuit breaker so a dead service doesn't tie up every request.",
+]
+
+[[rule]]
+id = "dotnet.connection-string-missing"
+title = "The database connection string isn't set"
+examples = [
+  'System.InvalidOperationException: The ConnectionString property has not been initialized.',
+]
+severity = "critical"
+priority = 15
+tags = ["dotnet", "config", "startup"]
+contains = ["the connectionstring property has not been initialized"]
+explain = """
+The app opened a database connection with an empty connection string: GetConnectionString found no entry \
+by that name in this environment's configuration."""
+fix = [
+  "Check ConnectionStrings:<name> in appsettings.<Environment>.json, and ASPNETCORE_ENVIRONMENT.",
+  "From an environment variable, the name uses double underscores: ConnectionStrings__Default.",
+]
+
+[[rule]]
+id = "dotnet.assembly-missing"
+title = "A .NET assembly couldn't be loaded: {assembly}"
+examples = [
+  "System.IO.FileNotFoundException: Could not load file or assembly 'Shop.Payments, Version=2.1.0.0, Culture=neutral, PublicKeyToken=null'. The system cannot find the file specified.",
+]
+severity = "critical"
+priority = 15
+tags = ["dotnet", "startup", "deploy"]
+contains = ["could not load file or assembly"]
+regex = "Could not load file or assembly '([^,']+)"
+captures = ["assembly"]
+explain = """
+The app needs {assembly} and it isn't in the deployed output, or a different version is. Usually a package \
+reference missing from the published project, or a mix of versions across projects."""
+fix = [
+  "Publish again from a clean build (dotnet publish -c Release) and deploy the whole output folder.",
+  "Check every project references the same version of {assembly}.",
+]
+
+[[rule]]
+id = "dotnet.oom"
+title = ".NET ran out of memory"
+examples = [
+  "System.OutOfMemoryException: Exception of type 'System.OutOfMemoryException' was thrown.",
+]
+severity = "critical"
+priority = 20
+tags = ["dotnet", "memory"]
+contains = ["system.outofmemoryexception"]
+level = "any"
+explain = """
+The process couldn't get the memory it asked for: the container's limit is too small for the app, something \
+holds on to memory (a growing cache or list), or one operation loads far too much at once."""
+fix = [
+  "Check the container's memory limit against what the app really uses (dotnet-counters monitor).",
+  "Take a dump while memory grows and look at what holds it: dotnet-gcdump collect -p <pid>",
+  "Stream large files and query results instead of loading them whole.",
+]

@@ -1,0 +1,27 @@
+redis-1  | 1:M 04 Nov 2026 02:00:00.001 * Background saving started by pid 42
+cart-1   | 2026-11-04T10:00:01.120+08:00  INFO 1 --- [cart] [nio-8080-exec-1] c.e.cart.CartController                  : GET /cart/7
+cart-1   | 2026-11-04T10:00:02.301+08:00 ERROR 1 --- [cart] [nio-8080-exec-2] o.a.c.c.C.[.[.[/].[dispatcherServlet]    : Servlet.service() for servlet [dispatcherServlet] in context with path [] threw exception
+cart-1   | io.lettuce.core.RedisCommandExecutionException: OOM command not allowed when used memory > 'maxmemory'.
+cart-1   | 	at io.lettuce.core.internal.ExceptionFactory.createExecutionException(ExceptionFactory.java:147)
+cart-1   | 	at org.springframework.data.redis.connection.lettuce.LettuceConnection.convertLettuceAccessException(LettuceConnection.java:281)
+cart-1   | 	at com.example.cart.CartService.add(CartService.java:58)
+cart-1   | 	at com.example.cart.CartController.addItem(CartController.java:31)
+cart-1   | 2026-11-04T10:00:03.410+08:00 ERROR 1 --- [cart] [nio-8080-exec-3] o.a.c.c.C.[.[.[/].[dispatcherServlet]    : Servlet.service() for servlet [dispatcherServlet] in context with path [] threw exception
+cart-1   | io.lettuce.core.RedisCommandExecutionException: OOM command not allowed when used memory > 'maxmemory'.
+cart-1   | 	at com.example.cart.CartService.add(CartService.java:58)
+cart-1   | 2026-11-04T10:00:05.004+08:00  WARN 1 --- [cart] [nio-8081-exec-1] o.s.b.a.data.redis.RedisHealthIndicator  : Redis health check failed
+orders-1 | 2026-11-04T10:00:06.200+08:00 ERROR 1 --- [orders] [nio-8080-exec-4] c.e.orders.CheckoutService               : Checkout failed for cart 7
+orders-1 | feign.FeignException$InternalServerError: [500] during [POST] to [http://cart:8080/cart/7/items] [CartClient#add(Long,Item)]: [{"error":"Internal Server Error"}]
+orders-1 | 	at com.example.orders.CheckoutService.checkout(CheckoutService.java:44)
+nginx-1  | 172.18.0.1 - - [04/Nov/2026:02:00:06 +0000] "POST /api/checkout HTTP/1.1" 500 61 "-" "Mozilla/5.0"
+orders-1 | 2026-11-04T10:00:07.810+08:00 ERROR 1 --- [orders] [nio-8080-exec-5] c.e.orders.CheckoutService               : Checkout failed for cart 9
+orders-1 | feign.FeignException$InternalServerError: [500] during [POST] to [http://cart:8080/cart/9/items] [CartClient#add(Long,Item)]: [{"error":"Internal Server Error"}]
+orders-1 | 	at com.example.orders.CheckoutService.checkout(CheckoutService.java:44)
+nginx-1  | 172.18.0.1 - - [04/Nov/2026:02:00:07 +0000] "POST /api/checkout HTTP/1.1" 500 61 "-" "Mozilla/5.0"
+cart-1   | 2026-11-04T10:00:08.002+08:00 ERROR 1 --- [cart] [nio-8080-exec-6] o.a.c.c.C.[.[.[/].[dispatcherServlet]    : Servlet.service() for servlet [dispatcherServlet] in context with path [] threw exception
+cart-1   | io.lettuce.core.RedisCommandExecutionException: OOM command not allowed when used memory > 'maxmemory'.
+cart-1   | 	at com.example.cart.CartService.add(CartService.java:58)
+orders-1 | 2026-11-04T10:00:09.500+08:00  WARN 1 --- [orders] [nio-8080-exec-7] c.e.orders.CheckoutService               : Cart unavailable: io.github.resilience4j.circuitbreaker.CallNotPermittedException: CircuitBreaker 'cart' is OPEN and does not permit further calls
+nginx-1  | 172.18.0.1 - - [04/Nov/2026:02:00:09 +0000] "POST /api/checkout HTTP/1.1" 503 54 "-" "Mozilla/5.0"
+orders-1 | 2026-11-04T10:00:10.020+08:00  WARN 1 --- [orders] [nio-8080-exec-8] c.e.orders.CheckoutService               : Cart unavailable: io.github.resilience4j.circuitbreaker.CallNotPermittedException: CircuitBreaker 'cart' is OPEN and does not permit further calls
+nginx-1  | 172.18.0.1 - - [04/Nov/2026:02:00:10 +0000] "POST /api/checkout HTTP/1.1" 503 54 "-" "Mozilla/5.0"

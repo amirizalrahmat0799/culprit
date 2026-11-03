@@ -1,0 +1,394 @@
+# Build and CI logs: Maven, Gradle, npm, TypeScript, pip, Go, Docker builds and GitHub Actions. So
+# `culprit analyze build.log` points at the step that broke a build, not just "exit code 1".
+
+# ---- Maven --------------------------------------------------------------------------------------------
+
+[[rule]]
+id = "maven.dependency-resolution"
+title = "Maven can't download a dependency"
+examples = [
+  '[ERROR] Failed to execute goal on project shop: Could not resolve dependencies for project com.example:shop:jar:1.0.0: Could not find artifact com.example:payments-client:jar:2.1.0 in central (https://repo.maven.apache.org/maven2) -> [Help 1]',
+]
+severity = "critical"
+priority = 15
+tags = ["maven", "java", "build", "ci"]
+contains = ["could not resolve dependencies for project", "could not find artifact", "could not transfer artifact"]
+explain = """
+Maven couldn't get a dependency from any repository it knows: the version doesn't exist, it's in a private \
+repository this build has no access to (no settings.xml credentials in CI), or the repository wasn't \
+reachable."""
+fix = [
+  "Check the artifact and version exist in the repository named in the message.",
+  "For a private repository, give the build the server credentials in settings.xml (in CI, from secrets).",
+  "If it's a snapshot of your own module, build and install that module first, or build from the parent.",
+]
+
+[[rule]]
+id = "maven.compilation"
+title = "Java doesn't compile: {file}:{line}: {message}"
+examples = [
+  '[ERROR] /home/runner/work/shop/src/main/java/com/example/shop/OrderService.java:[42,17] cannot find symbol',
+  '[ERROR] /home/runner/work/shop/src/main/java/com/example/shop/Order.java:[12,8] class OrderDto is public, should be declared in a file named OrderDto.java',
+]
+severity = "critical"
+priority = 15
+tags = ["maven", "java", "build", "ci"]
+contains = [".java:["]
+regex = '(\S+\.java):\[(\d+),\d+\] (.+)'
+captures = ["file", "line", "message"]
+explain = """
+The Java compiler stopped at {file}, line {line}: {message}. "cannot find symbol" means a class, method or \
+variable doesn't exist as written: a typo, a missing import, a dependency that changed, or code from \
+another module that wasn't rebuilt."""
+fix = [
+  "Open {file} at line {line}.",
+  "For 'cannot find symbol', the next lines of Maven's output name the symbol and where it was looked for.",
+  "If it compiles in your IDE but not here, build from clean (mvn clean verify): the IDE may use stale classes.",
+]
+
+[[rule]]
+id = "maven.test-failures"
+title = "Tests failed"
+examples = [
+  '[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test (default-test) on project shop: There are test failures.',
+]
+severity = "critical"
+priority = 15
+tags = ["maven", "java", "tests", "ci"]
+contains = ["there are test failures"]
+explain = """
+One or more tests failed, so the build stopped. The failing tests and their assertions are listed above \
+this message ("[ERROR] Failures:" and "Tests run: ..., Failures: ...")."""
+fix = [
+  "Look for '<<< FAILURE!' and '[ERROR] Failures:' above for the failing tests and why.",
+  "The full output of each test is in target/surefire-reports/; upload it as a CI artifact to read it later.",
+  "Run one test locally: mvn -Dtest=OrderServiceTest#placesOrder test",
+]
+
+[[rule]]
+id = "java.release-not-supported"
+title = "The JDK is older than the Java version the build targets"
+examples = [
+  '[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.13.0:compile (default-compile) on project shop: Fatal error compiling: error: release version 21 not supported -> [Help 1]',
+  'error: invalid source release: 21',
+]
+severity = "critical"
+priority = 16
+tags = ["java", "build", "ci"]
+contains = ["release version", "invalid source release", "invalid target release"]
+regex = '(?:release version \d+ not supported|invalid (?:source|target) release: \d+)'
+explain = """
+The project is compiled for a newer Java than the JDK running the build. Java is backwards compatible, not \
+forwards: JDK 17 can't build code that targets Java 21."""
+fix = [
+  "Check which JDK runs the build: java -version and mvn -version (CI images often default to an older one).",
+  "In GitHub Actions, set it with actions/setup-java (java-version: the release in the pom).",
+  "Or lower maven.compiler.release, if the code doesn't need the newer Java.",
+]
+
+# ---- Gradle -------------------------------------------------------------------------------------------
+
+[[rule]]
+id = "gradle.dependency-resolution"
+title = "Gradle can't download a dependency"
+examples = [
+  "> Could not resolve all files for configuration ':compileClasspath'.",
+  "   > Could not resolve all dependencies for configuration ':runtimeClasspath'.",
+]
+severity = "critical"
+priority = 16
+tags = ["gradle", "java", "build", "ci"]
+contains = ["could not resolve all files for configuration", "could not resolve all dependencies for configuration"]
+explain = """
+Gradle couldn't get a dependency from the repositories in the build: the version doesn't exist, it's in a \
+repository not listed in repositories { }, or a private repository needs credentials the build doesn't have."""
+fix = [
+  "The lines under this message name the missing dependency and the repositories searched.",
+  "Check the version exists, and the repository is declared (in settings.gradle dependencyResolutionManagement, or the build file).",
+  "For a private repository, pass credentials from CI secrets (gradle.properties or environment variables).",
+]
+
+[[rule]]
+id = "gradle.task-failed"
+title = "Gradle task {task} failed"
+examples = [
+  "Execution failed for task ':app:compileKotlin'.",
+]
+severity = "error"
+symptom = true
+priority = 5
+tags = ["gradle", "build", "ci"]
+contains = ["execution failed for task"]
+regex = "Execution failed for task '([^']+)'"
+captures = ["task"]
+explain = """
+The task {task} failed and stopped the build. The reason is in the lines right under "What went wrong" and \
+above it in the task's own output."""
+fix = [
+  "Read the lines above for the task's own errors (compiler messages, failing tests).",
+  "Run it again with more detail: ./gradlew {task} --stacktrace (or --info).",
+]
+
+[[rule]]
+id = "gradle.test-failures"
+title = "Tests failed"
+examples = [
+  "There were failing tests. See the report at: file:///home/runner/work/shop/build/reports/tests/test/index.html",
+]
+severity = "critical"
+priority = 15
+tags = ["gradle", "tests", "ci"]
+contains = ["there were failing tests"]
+explain = """
+One or more tests failed. Gradle's console shows only which ones; the details are in the HTML report it \
+names."""
+fix = [
+  "Upload build/reports/tests/ as a CI artifact, or print failures to the console: testLogging { exceptionFormat = 'full' }",
+  "Run one test locally: ./gradlew test --tests 'com.example.OrderServiceTest'",
+]
+
+# ---- npm and TypeScript ----------------------------------------------------------------------------------
+
+[[rule]]
+id = "npm.eresolve"
+title = "npm can't settle the dependency versions (ERESOLVE)"
+examples = [
+  'npm error code ERESOLVE',
+  'npm ERR! ERESOLVE unable to resolve dependency tree',
+]
+severity = "critical"
+priority = 15
+tags = ["npm", "node", "build", "ci"]
+contains = ["eresolve"]
+explain = """
+Two packages need versions of a peer dependency that can't both be satisfied (for example a library that \
+supports React 18 in a project on React 19). npm 7 and later refuse to install rather than guess."""
+fix = [
+  "Read the lines under the error: 'Found:' is what the project has, 'Could not resolve dependency:' who wants what.",
+  "Upgrade the package that's behind to a version that supports what the project uses.",
+  "As a stopgap, overrides in package.json, or --legacy-peer-deps (which skips the check rather than fixing it).",
+]
+
+[[rule]]
+id = "npm.ci-out-of-sync"
+title = "package-lock.json doesn't match package.json"
+examples = [
+  'npm error `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync. Please update your lock file with `npm install` before continuing.',
+]
+severity = "critical"
+priority = 16
+tags = ["npm", "node", "build", "ci"]
+contains = ["can only install packages when your package.json and package-lock.json"]
+explain = """
+Someone changed package.json without updating package-lock.json (or with another npm version), and npm ci \
+installs only exactly what the lock file says."""
+fix = [
+  "Run npm install locally, and commit the updated package-lock.json.",
+  "Use the same major npm version locally and in CI, so both write the lock file the same way.",
+]
+
+[[rule]]
+id = "npm.not-found"
+title = "npm package {package} not found"
+examples = [
+  'npm error 404 Not Found - GET https://registry.npmjs.org/@kedai%2fui - Not found',
+  "npm ERR! 404 Not Found - GET https://registry.npmjs.org/left-padd - Not found",
+]
+severity = "critical"
+priority = 15
+tags = ["npm", "node", "build", "ci"]
+contains = ["404 not found - get"]
+regex = '404 Not Found - GET https?://\S+?/(\S+) - '
+captures = ["package"]
+explain = """
+The registry has no package called {package} (%2f is a /). Either the name or version is wrong, or it's a \
+private package and this install has no access to the registry or scope that has it."""
+fix = [
+  "Check the name in package.json.",
+  "For a private scope, configure its registry and a token in .npmrc (in CI, the token from secrets): @scope:registry=<url>, and _authToken for that registry.",
+]
+
+[[rule]]
+id = "npm.script-failed"
+title = "An npm script failed"
+examples = [
+  'npm error Lifecycle script `build` failed with error:',
+  'npm ERR! code ELIFECYCLE',
+]
+severity = "error"
+symptom = true
+priority = 5
+tags = ["npm", "node", "build", "ci"]
+contains = ["lifecycle script", "elifecycle"]
+explain = """
+An npm script exited with an error. This line only reports it; the real error is in the script's \
+own output above (a compiler, a test runner, a bundler)."""
+fix = [
+  "Scroll up to the first error from the tool the script runs.",
+  "Run it locally the same way: npm run <script>",
+]
+
+[[rule]]
+id = "typescript.error"
+title = "TypeScript error {code}: {message}"
+examples = [
+  "src/orders/api.ts(12,5): error TS2322: Type 'string' is not assignable to type 'number'.",
+  "src/app.ts:3:22 - error TS2307: Cannot find module './orders' or its corresponding type declarations.",
+]
+severity = "error"
+priority = 15
+tags = ["typescript", "node", "build", "ci"]
+contains = ["error ts"]
+regex = 'error (TS\d+): (.+)'
+captures = ["code", "message"]
+explain = """
+The TypeScript compiler rejected the code: {message} The file and line are at the start of the line."""
+fix = [
+  "Open the file at the line and column given before the error.",
+  "TS2307 (cannot find module): check the path and file name's case, and that @types packages are installed.",
+  "If it passes locally, check CI uses the same TypeScript version (the lock file) and tsconfig.",
+]
+
+# ---- Python, Go ----------------------------------------------------------------------------------------------
+
+[[rule]]
+id = "pip.no-matching-version"
+title = "pip can't find {requirement}"
+examples = [
+  'ERROR: Could not find a version that satisfies the requirement fastapi==9.9.0 (from versions: 0.1.0, 0.115.6)',
+  'ERROR: No matching distribution found for fastapi==9.9.0',
+]
+severity = "critical"
+priority = 15
+tags = ["python", "pip", "build", "ci"]
+contains = ["could not find a version that satisfies the requirement", "no matching distribution found for"]
+regex = '(?:requirement|found for) (\S+)'
+captures = ["requirement"]
+explain = """
+No release of {requirement} fits this Python and platform: the version doesn't exist, it needs a newer (or \
+older) Python than this one, or it's in a private index pip wasn't told about."""
+fix = [
+  "Check the version exists: pip index versions <package>",
+  "Check the Python version: a package may not support this one yet (python --version).",
+  "For a private index, pass --index-url or --extra-index-url (with credentials from CI secrets).",
+]
+
+[[rule]]
+id = "go.missing-sum"
+title = "go.sum is missing an entry"
+examples = [
+  'main.go:7:2: missing go.sum entry for module providing package github.com/redis/go-redis/v9 (imported by example.com/shop); to add:',
+]
+severity = "critical"
+priority = 15
+tags = ["go", "build", "ci"]
+contains = ["missing go.sum entry"]
+explain = """
+The code imports a module that go.sum has no checksum for, usually because go.mod was edited (or a new \
+import added) without running go mod tidy."""
+fix = [
+  "Run go mod tidy locally and commit go.mod and go.sum.",
+]
+
+[[rule]]
+id = "go.undefined"
+title = "Go doesn't compile: undefined {name}"
+examples = [
+  './internal/orders/service.go:42:9: undefined: NewPaymentClient',
+]
+severity = "critical"
+priority = 15
+tags = ["go", "build", "ci"]
+contains = ["undefined: "]
+regex = '\.go:\d+:\d+: undefined: (\S+)'
+captures = ["name"]
+explain = """
+The Go compiler found {name} used but not declared in that package: a typo, an unexported name (lower case) \
+used from another package, or a file excluded by build tags."""
+fix = [
+  "Check the spelling and that it's exported (starts with a capital) if it's in another package.",
+  "If it's defined in a file with build tags (//go:build), check those tags apply to this build.",
+]
+
+# ---- Docker builds and GitHub Actions -------------------------------------------------------------------------
+
+[[rule]]
+id = "docker.build-step-failed"
+title = "A Dockerfile step failed: {command}"
+examples = [
+  'ERROR: failed to solve: process "/bin/sh -c npm ci" did not complete successfully: exit code: 1',
+]
+severity = "error"
+symptom = true
+priority = 12
+tags = ["docker", "build", "ci"]
+contains = ["did not complete successfully"]
+regex = 'process "(?:/bin/sh -c )?([^"]+)" did not complete successfully'
+captures = ["command"]
+explain = """
+The Dockerfile step running "{command}" exited with an error, so the image wasn't built. The real error is \
+in that step's output just above."""
+fix = [
+  "Read the step's output above; with BuildKit, docker build --progress=plain shows it in full.",
+  "Try the command in the same base image: docker run --rm -it <base image> sh",
+]
+
+[[rule]]
+id = "docker.build-file-missing"
+title = "Dockerfile COPY can't find {path}"
+examples = [
+  'ERROR: failed to solve: failed to compute cache key: failed to calculate checksum of ref 4f8e2a1c-...::q9x2k3: "/target/shop.jar": not found',
+]
+severity = "critical"
+priority = 18
+tags = ["docker", "build", "ci"]
+contains = ["failed to compute cache key"]
+regex = '"([^"]+)": not found'
+captures = ["path"]
+explain = """
+A COPY or ADD in the Dockerfile names {path}, and it isn't in the build context. It wasn't built yet (a jar \
+from a Maven step that didn't run), it's excluded by .dockerignore, or the build runs from another folder."""
+fix = [
+  "Build what the Dockerfile copies first (or build it inside the Dockerfile with a multi-stage build).",
+  "Check .dockerignore doesn't exclude it.",
+  "Paths in COPY are relative to the build context (the folder given to docker build), not the Dockerfile.",
+]
+
+[[rule]]
+id = "github-actions.exit-code"
+title = "A CI step exited with code {code}"
+examples = [
+  'Error: Process completed with exit code 1.',
+]
+severity = "error"
+symptom = true
+priority = 0
+tags = ["github-actions", "ci"]
+contains = ["process completed with exit code"]
+regex = 'Process completed with exit code (\d+)'
+captures = ["code"]
+explain = """
+A step's command exited with code {code}, so GitHub Actions marked the step failed. This line only reports \
+it; the reason is in the command's output above."""
+fix = [
+  "Look above this line for the first error.",
+]
+
+[[rule]]
+id = "github-actions.timeout"
+title = "A CI job ran out of time"
+examples = [
+  'The job running on runner GitHub Actions 12 has exceeded the maximum execution time of 360 minutes.',
+]
+severity = "error"
+priority = 12
+tags = ["github-actions", "ci"]
+contains = ["has exceeded the maximum execution time"]
+explain = """
+The job hit its time limit (timeout-minutes, 360 by default) and was cancelled. Something hung: a test \
+waiting forever, a prompt waiting for input, a service that never became ready."""
+fix = [
+  "Look at the last lines before the cancel: that's the step that hung.",
+  "Set timeout-minutes on jobs and steps, so a hang fails in minutes instead of hours.",
+  "Make commands non-interactive (-y, --batch-mode, CI=true).",
+]

@@ -1,0 +1,123 @@
+# Redis: errors from the server and from clients (Lettuce, Jedis, Spring Data Redis, ioredis, node-redis, redis-py).
+
+[[rule]]
+id = "redis.connection-refused"
+title = "Redis is not reachable"
+examples = [
+  'org.springframework.data.redis.RedisConnectionFailureException: Unable to connect to Redis; nested exception is io.lettuce.core.RedisConnectionException: Unable to connect to localhost/<unresolved>:6379',
+  'redis.clients.jedis.exceptions.JedisConnectionException: Failed to connect to any host resolved for DNS name.',
+  '[ioredis] Unhandled error event: Error: connect ECONNREFUSED 127.0.0.1:6379',
+  'redis.exceptions.ConnectionError: Error 111 connecting to localhost:6379. Connection refused.',
+]
+severity = "error"
+symptom = true
+priority = 15
+tags = ["redis", "cache", "connections"]
+contains = ["redisconnectionfailureexception", "redisconnectionexception", "jedisconnectionexception", "[ioredis]", "redis.exceptions.connectionerror"]
+explain = """
+The app couldn't connect to Redis: it's down or still starting, the host or port is wrong, or (in Docker) the \
+app is pointed at localhost instead of the Redis container's name."""
+fix = [
+  "Check Redis answers: redis-cli -h <host> -p 6379 ping (it should say PONG).",
+  "Check the host and port the app uses (spring.data.redis.host, REDIS_URL ...); in Docker use the service name.",
+  "If the app should keep working without the cache, catch the error around cache calls instead of failing the request.",
+]
+
+[[rule]]
+id = "redis.oom"
+title = "Redis is full (maxmemory reached)"
+examples = [
+  "io.lettuce.core.RedisCommandExecutionException: OOM command not allowed when used memory > 'maxmemory'.",
+  "ReplyError: OOM command not allowed when used memory > 'maxmemory'.",
+]
+severity = "critical"
+priority = 18
+tags = ["redis", "cache", "memory"]
+contains = ["oom command not allowed when used memory"]
+explain = """
+Redis reached its maxmemory limit and its eviction policy is noeviction, so it refuses every command that \
+would add data. Reads still work; writes fail until memory is freed."""
+fix = [
+  "See what uses the memory: redis-cli info memory, and redis-cli --bigkeys",
+  "For a cache, let Redis evict old keys: CONFIG SET maxmemory-policy allkeys-lru (and set it in redis.conf).",
+  "Give keys an expiry (TTL) so they don't pile up, or raise maxmemory.",
+]
+
+[[rule]]
+id = "redis.readonly-replica"
+title = "Writing to a read-only Redis replica"
+examples = [
+  "io.lettuce.core.RedisReadOnlyException: READONLY You can't write against a read only replica.",
+  "redis.exceptions.ReadOnlyError: You can't write against a read only replica.",
+]
+severity = "error"
+priority = 18
+tags = ["redis", "cache", "replication"]
+contains = ["write against a read only replica", "write against a read only slave"]
+explain = """
+The app sent a write to a Redis replica. This happens after a failover (the old primary became a replica \
+while the app still points at it), or when the address in the config is a replica's."""
+fix = [
+  "Point the app at the primary, or at Sentinel or the cluster so the client finds the primary itself.",
+  "After a failover, restart or reconnect clients that cache the old primary's address.",
+  "Check which node is primary: redis-cli -h <host> info replication",
+]
+
+[[rule]]
+id = "redis.cluster-moved"
+title = "Redis Cluster redirect not followed"
+examples = [
+  'io.lettuce.core.RedisCommandExecutionException: MOVED 3999 10.0.1.12:6381',
+  "ReplyError: CROSSSLOT Keys in request don't hash to the same slot",
+]
+severity = "error"
+priority = 18
+tags = ["redis", "cache", "cluster"]
+contains = ["moved ", "crossslot"]
+regex = '(MOVED \d+ \S+|CROSSSLOT)'
+captures = ["reply"]
+explain = """
+Redis runs as a cluster, and the app talks to it like a single server. MOVED means the key lives on another \
+node and the client didn't follow; CROSSSLOT means one command used keys that live in different slots."""
+fix = [
+  "Use the client's cluster mode (spring.data.redis.cluster.nodes, ioredis new Redis.Cluster(...), redis-py RedisCluster).",
+  "For multi-key commands, give related keys the same hash tag (the part of a key between curly braces is all the cluster hashes), so they share a slot.",
+]
+
+[[rule]]
+id = "redis.loading"
+title = "Redis is still loading its data"
+examples = [
+  'io.lettuce.core.RedisLoadingException: LOADING Redis is loading the dataset in memory',
+]
+severity = "warning"
+symptom = true
+priority = 18
+tags = ["redis", "cache", "startup"]
+contains = ["redis is loading the dataset in memory"]
+explain = """
+Redis just started and is reading its saved data (RDB or AOF) back into memory. It refuses commands until it \
+has finished, which can take minutes for a large dataset."""
+fix = [
+  "Usually it passes on its own; let clients retry with a backoff.",
+  "If it happens often, find out why Redis restarts (its log, the container's restarts, the OOM killer).",
+]
+
+[[rule]]
+id = "redis.auth"
+title = "Redis refused the password"
+examples = [
+  'io.lettuce.core.RedisCommandExecutionException: NOAUTH Authentication required.',
+  'ReplyError: WRONGPASS invalid username-password pair or user is disabled.',
+]
+severity = "critical"
+priority = 18
+tags = ["redis", "cache", "auth"]
+contains = ["noauth authentication required", "wrongpass invalid username-password pair"]
+explain = """
+Redis needs a password (NOAUTH) and the app sent none, or the username and password don't match a user \
+(WRONGPASS)."""
+fix = [
+  "Set the password the app uses (spring.data.redis.password, the password in REDIS_URL redis://:pass@host:6379).",
+  "With Redis 6+ users (ACL), set the username too, and check the user is enabled: ACL LIST",
+]

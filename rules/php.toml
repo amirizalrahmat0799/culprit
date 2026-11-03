@@ -1,0 +1,207 @@
+# PHP and Laravel: PHP's own fatal errors, PHP-FPM, and Laravel's usual setup problems.
+
+[[rule]]
+id = "php.memory-exhausted"
+title = "PHP hit its memory limit ({limit} bytes)"
+examples = [
+  'PHP Fatal error:  Allowed memory size of 134217728 bytes exhausted (tried to allocate 20480 bytes) in /var/www/app/Services/ReportService.php on line 52',
+]
+severity = "critical"
+priority = 20
+tags = ["php", "memory"]
+contains = ["allowed memory size of"]
+level = "any"
+regex = 'Allowed memory size of (\d+) bytes exhausted'
+captures = ["limit"]
+explain = """
+The script used all the memory memory_limit allows ({limit} bytes) and was stopped. Usually one request \
+loads too much at once: a whole table into a collection, a big file into a string, or an endless loop."""
+fix = [
+  "Look at the file and line in the message: that's where it ran out, not always what filled it.",
+  "Process large data in pieces: chunk() or lazy() in Laravel, cursor() for queries, streams for files.",
+  "Raise memory_limit only if the job really needs it (for a worker or command, not every web request).",
+]
+
+[[rule]]
+id = "php.max-execution-time"
+title = "PHP script ran longer than {seconds} s"
+examples = [
+  'PHP Fatal error:  Maximum execution time of 30 seconds exceeded in /var/www/vendor/guzzlehttp/guzzle/src/Handler/CurlHandler.php on line 44',
+]
+severity = "error"
+priority = 20
+tags = ["php", "performance"]
+contains = ["maximum execution time of"]
+level = "any"
+regex = 'Maximum execution time of (\d+) seconds? exceeded'
+captures = ["seconds"]
+explain = """
+The script was stopped after max_execution_time ({seconds} s). It was waiting for something slow (another \
+service, a big query) or doing too much work in one request."""
+fix = [
+  "The file in the message shows what it was doing: in an HTTP client, a call to another service hung.",
+  "Give outgoing calls their own short timeouts (Http::timeout(5) in Laravel).",
+  "Move long work to a queued job instead of the web request.",
+]
+
+[[rule]]
+id = "php.call-on-null"
+title = "PHP: called {method}() on null"
+examples = [
+  'PHP Fatal error:  Uncaught Error: Call to a member function getName() on null in /var/www/app/Http/Controllers/OrderController.php:41',
+  '[2026-11-04 10:00:00] production.ERROR: Call to a member function format() on null {"userId":42,"exception":"[object] (Error(code: 0): Call to a member function format() on null at /var/www/app/Models/Order.php:88)"}',
+]
+severity = "error"
+priority = 15
+tags = ["php", "laravel"]
+contains = ["call to a member function"]
+regex = 'Call to a member function (\w+)\(\) on null'
+captures = ["method"]
+explain = """
+Code called {method}() on a variable that was null: a model that wasn't found (find() returns null), a \
+relation that isn't set, or an optional value."""
+fix = [
+  "Check where the value comes from on the line in the message; use findOrFail() when the record must exist.",
+  "Use the nullsafe operator (?->) where the value may legitimately be missing.",
+]
+
+[[rule]]
+id = "php.class-not-found"
+title = "PHP class {class} not found"
+examples = [
+  'PHP Fatal error:  Uncaught Error: Class "App\Services\PaymentGateway" not found in /var/www/app/Http/Controllers/CheckoutController.php:23',
+]
+severity = "critical"
+priority = 15
+tags = ["php", "composer"]
+contains = ["not found in", "class \""]
+regex = 'Class "([^"]+)" not found'
+captures = ["class"]
+explain = """
+PHP couldn't load the class {class}. The file's namespace or name doesn't match its path (PSR-4), the \
+package that provides it isn't installed, or Composer's autoloader is out of date. Paths are case-sensitive \
+on Linux, so code that works on Windows or macOS can fail here."""
+fix = [
+  "Rebuild the autoloader: composer dump-autoload",
+  "Check the namespace and class name match the folder and file name exactly, including case.",
+  "If it's from a package, check it's in composer.json and installed (composer install --no-dev on deploy).",
+]
+
+[[rule]]
+id = "phpfpm.max-children"
+title = "PHP-FPM pool {pool} has no free workers"
+examples = [
+  '[04-Nov-2026 10:00:00] WARNING: [pool www] server reached pm.max_children setting (5), consider raising it',
+]
+severity = "error"
+priority = 15
+tags = ["php", "php-fpm", "performance"]
+contains = ["server reached pm.max_children setting"]
+regex = '\[pool (\S+)\] server reached pm.max_children setting \((\d+)\)'
+captures = ["pool", "max"]
+explain = """
+All {max} PHP-FPM workers of the pool {pool} were busy, so new requests wait in the queue; users see slow \
+pages or 502/504 from nginx. Either there's more traffic than {max} workers can serve, or requests got slow \
+and each holds a worker longer."""
+fix = [
+  "Check whether requests got slow (the slow log: request_slowlog_timeout); slow requests fill the pool.",
+  "Raise pm.max_children if memory allows: about (free memory) / (memory per worker).",
+]
+
+[[rule]]
+id = "laravel.db-connection"
+title = "Laravel can't connect to the database"
+examples = [
+  '[2026-11-04 10:00:00] production.ERROR: SQLSTATE[HY000] [2002] Connection refused (Connection: mysql, SQL: select * from `orders` where `id` = 42 limit 1)',
+  'SQLSTATE[08006] [7] could not translate host name "db" to address: Name or service not known',
+]
+severity = "error"
+symptom = true
+priority = 15
+tags = ["php", "laravel", "database", "connections"]
+contains = ["sqlstate[hy000] [2002]", "sqlstate[08006]", "sqlstate[hy000] [1045]"]
+explain = """
+Laravel couldn't open a database connection: the database is down, DB_HOST or DB_PORT is wrong (in Docker, \
+use the service name, not 127.0.0.1), or the username or password was refused ([1045])."""
+fix = [
+  "Check DB_HOST, DB_PORT, DB_DATABASE, DB_USERNAME and DB_PASSWORD in .env.",
+  "After changing .env on a server with cached config, run php artisan config:clear (or config:cache again).",
+  "Check the database answers from the app's machine or container.",
+]
+
+[[rule]]
+id = "laravel.no-app-key"
+title = "Laravel has no APP_KEY"
+examples = [
+  'production.ERROR: No application encryption key has been specified. {"exception":"[object] (Illuminate\\Encryption\\MissingAppKeyException(code: 0): No application encryption key has been specified. at /var/www/vendor/laravel/framework/src/Illuminate/Encryption/EncryptionServiceProvider.php:83)"}',
+]
+severity = "critical"
+priority = 15
+tags = ["php", "laravel", "config"]
+contains = ["no application encryption key has been specified"]
+explain = """
+APP_KEY is empty, so Laravel can't encrypt cookies and sessions, and every page fails."""
+fix = [
+  "Generate one: php artisan key:generate (it writes APP_KEY into .env).",
+  "On servers, set APP_KEY as an environment variable and keep it the same across deploys, or users are logged out and encrypted data can't be read.",
+]
+
+[[rule]]
+id = "laravel.storage-permission"
+title = "Laravel can't write to {path}"
+examples = [
+  'The stream or file "/var/www/storage/logs/laravel.log" could not be opened in append mode: Failed to open stream: Permission denied',
+]
+severity = "critical"
+priority = 16
+tags = ["php", "laravel", "permissions", "deploy"]
+contains = ["could not be opened in append mode", "failed to open stream: permission denied"]
+regex = 'stream or file "([^"]+)"'
+captures = ["path"]
+explain = """
+The web server's user (www-data, nginx, apache) can't write to {path}. Laravel needs to write to storage/ \
+and bootstrap/cache/; this often happens after files were created by root (a deploy, an artisan command run \
+as root)."""
+fix = [
+  "Give the web server's user ownership: sudo chown -R www-data:www-data storage bootstrap/cache",
+  "Run artisan commands as that user on the server: sudo -u www-data php artisan ...",
+]
+
+[[rule]]
+id = "laravel.target-class-missing"
+title = "Laravel can't find {class}"
+examples = [
+  'Illuminate\Contracts\Container\BindingResolutionException: Target class [OrderController] does not exist.',
+]
+severity = "error"
+priority = 15
+tags = ["php", "laravel"]
+contains = ["target class [", "does not exist"]
+regex = 'Target class \[([^\]]+)\] does not exist'
+captures = ["class"]
+explain = """
+A route or binding names {class}, and Laravel can't find it. In routes, controllers must be named with their \
+full namespace or the ::class syntax since Laravel 8."""
+fix = [
+  "In routes, use the class: Route::get('/orders', [OrderController::class, 'index']) with a use statement.",
+  "Check the class name and namespace match the file, then composer dump-autoload.",
+]
+
+[[rule]]
+id = "laravel.csrf-mismatch"
+title = "Laravel refused a form: CSRF token mismatch (419)"
+examples = [
+  'production.ERROR: CSRF token mismatch. {"exception":"[object] (Symfony\\Component\\HttpKernel\\Exception\\HttpException(code: 0): CSRF token mismatch. at /var/www/vendor/laravel/framework/src/Illuminate/Foundation/Exceptions/Handler.php:642)"}',
+]
+severity = "warning"
+priority = 15
+tags = ["php", "laravel", "security"]
+contains = ["csrf token mismatch"]
+explain = """
+A form or AJAX request came without a valid CSRF token, so Laravel refused it (419 Page Expired). For one \
+user it's an expired session; for everyone, sessions aren't kept (the session cookie isn't sent or saved)."""
+fix = [
+  "Forms need @csrf; AJAX requests need the X-CSRF-TOKEN header from the csrf-token meta tag.",
+  "Behind HTTPS or a proxy, check SESSION_DOMAIN, SESSION_SECURE_COOKIE and the trusted proxies, or the session cookie is dropped.",
+  "With several servers, use a shared session store (database, Redis) instead of files.",
+]

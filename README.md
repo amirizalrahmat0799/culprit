@@ -35,10 +35,19 @@ Press `a` in the viewer for the problems it found:
 
 ![The Problems panel: a failed migration marked as the root cause of the 502s that followed](docs/images/problems.png)
 
-- **It recognises known problems.** Over 110 rules cover Spring Boot, Hibernate, Flyway and Liquibase,
-  HikariCP, the JVM, Oracle (ORA- errors), PostgreSQL, MySQL, Node, Python, Go, Docker, Kubernetes and nginx.
+- **It recognises known problems.** Over 200 rules cover:
+  - **Java and Spring:** Spring Boot, Hibernate, Flyway and Liquibase, HikariCP, the JVM, and calls between
+    services (OpenFeign, RestTemplate, WebClient, Resilience4j, Eureka, Spring Cloud Config, Spring Security
+    and JWTs).
+  - **Databases:** Oracle (ORA- errors), PostgreSQL, MySQL, SQL Server, MongoDB and Elasticsearch.
+  - **Messaging and caches:** Kafka, RabbitMQ and Redis.
+  - **Other languages:** .NET and Entity Framework Core, PHP and Laravel, Ruby on Rails, Node, Python and Go.
+  - **Where it runs:** Docker and Compose, Kubernetes (scheduling, volumes, RBAC), systemd, cron, nginx.
+  - **Builds and CI:** Maven, Gradle, npm, TypeScript, pip, Go, Docker builds and GitHub Actions, so
+    `culprit analyze` on a failed CI log points at the step that broke.
+
   Each says what the problem means and what to do, with the values from your log filled in: the port, the
-  pool, the table, the migration.
+  pool, the table, the migration. The full list is in [What culprit supports](#what-culprit-supports).
 - **It finds the likely root cause.** The earliest problem that *causes* failures, not the connection refused,
   timeouts and 502s that follow it, and how many errors came after it.
 - **It groups the errors no rule knows.** The same error with a different order id or UUID is counted once, with
@@ -233,7 +242,7 @@ Logs hold secrets, and any website open in your browser can send requests to `lo
 - **Filters as you type.** Words, phrases, levels, fields and regular expressions, all at once.
 - **Lines up services.** Several files or Compose services get a source column, and timestamps from different
   time zones are all shown in your local time.
-- **Explains what went wrong.** Recognises over 110 known problems, finds the likely root cause, and groups
+- **Explains what went wrong.** Recognises over 200 known problems, finds the likely root cause, and groups
   repeated errors. See [Finding the cause](#finding-the-cause).
 - **Copes with big logs.** A million lines (118 MB) open in a couple of seconds, and filtering them while you
   type stays instant.
@@ -241,6 +250,80 @@ Logs hold secrets, and any website open in your browser can send requests to `lo
   when the output isn't a terminal, so `culprit --filter has:stack app.log > errors.txt` works in CI.
 
 ![Several Docker Compose services in culprit](docs/images/compose.png)
+
+## What culprit supports
+
+### Logs it reads
+
+| Format | Examples |
+|---|---|
+| JSON, one object per line | Spring Boot structured logging (ECS, Logstash, GELF), pino, bunyan, zap, slog, python-json-logger, Docker's json-file wrapper |
+| logfmt (`key=value`) | Go slog text, logrus, Heroku-style logs |
+| Text patterns | Spring Boot's and logback's defaults, log4j, java.util.logging, Python logging and uvicorn, Go's `log`, PostgreSQL's server log, nginx error logs, anything with a level word up front |
+| Access logs | nginx and Apache; the HTTP status becomes the level (5xx are errors, 4xx warnings) |
+| Prefixes | `docker compose logs` (`api-1  \| `) and `kubectl logs --prefix` (`[pod/api/c] `) become the entry's source |
+
+Terminal colours and other escape codes in a log are removed, so coloured output is understood too.
+
+**From:** one or more files (followed like `tail -F`, through log rotation), or anything piped in
+(`docker compose logs -f`, `kubectl logs -f`, a CI job's output).
+
+**Stack traces:** Java and Kotlin (with `Caused by:`), Python tracebacks, Node stack traces and Go panics are kept with
+the line they belong to, split into frames, and the first frame in your own code is pointed out. Other
+languages' traces stay attached to their entry as text.
+
+### Problems it recognises
+
+217 built-in rules. Each explains the problem with the values from your log filled in, and says what to do.
+List them with `culprit rules`, or [write your own](docs/rules.md).
+
+| Area | Rules | Covers |
+|---|---:|---|
+| Java and Spring | 29 | Spring Boot startup (port in use, missing bean, circular dependency, datasource URL), HikariCP pool exhausted, Hibernate and JPA, Flyway and Liquibase migrations, JVM out of memory and stack overflow, Jackson, class version and SSL trust errors |
+| Spring between services | 16 | OpenFeign, RestTemplate/RestClient and WebClient failures, Resilience4j circuit breaker and bulkhead, service discovery and Eureka, Spring Cloud Config, Spring Security access denied, expired or badly signed JWTs, upload limits, full thread pools, failed health checks |
+| PostgreSQL, MySQL, SQLite | 20 | Too many connections, missing table, column or database, login and permission errors, deadlocks, lock and statement timeouts, unique violations, a full disk |
+| Oracle | 14 | ORA- errors: unique constraint, missing table, invalid login, locked account, listener and service name, connect timeout, mutating table, deadlock, snapshot too old, max processes |
+| SQL Server | 6 | Deadlock victim, login failed (18456), timeouts, unreachable server, invalid object name, duplicate keys |
+| MongoDB | 4 | Duplicate key (E11000), server selection timeout, authentication, missing roles |
+| Elasticsearch | 4 | Disk flood stage (read-only indices), circuit breaker, mapping conflicts, all shards failed |
+| Kafka | 6 | Broker unreachable, missing topic, commit failed after a rebalance, offset out of range, record too large, unreadable records |
+| RabbitMQ | 4 | Connection refused, login refused, queue declared with other settings, missing queue or exchange |
+| Redis | 6 | Unreachable, out of memory (maxmemory), writing to a replica, cluster redirects, still loading, authentication |
+| .NET | 10 | Dependency injection, scoped service in a singleton, NullReferenceException, Kestrel port in use, EF Core pending changes and concurrency, HttpClient timeouts, missing connection string or assembly, out of memory |
+| PHP and Laravel | 10 | Memory and time limits, calls on null, missing classes, PHP-FPM out of workers, database connection, APP_KEY, storage permissions, missing controllers, CSRF |
+| Ruby on Rails | 7 | Pending migrations, connection pool timeouts, missing database, secret_key_base, undefined method for nil, authenticity token, record not found |
+| Node | 11 | Port in use, connection refused and reset, DNS, timeouts, unhandled rejections, missing modules, heap out of memory, undefined properties, too many open files |
+| Python | 9 | Missing modules and imports, None attributes, KeyError, recursion, ASGI app not found, port in use, Django missing tables, SQLAlchemy operational errors |
+| Go | 6 | Nil pointer, deadlock, concurrent map writes, index out of range, context deadline exceeded, DNS |
+| Containers and Kubernetes | 11 | OOMKilled, exit codes, CrashLoopBackOff, image pull errors, failed probes, eviction, missing ConfigMaps and Secrets, unschedulable pods, unbound volumes, mount failures, RBAC forbidden |
+| Docker, systemd, cron | 7 | `exec format error` (an image for another CPU), ports already allocated, the Docker daemon, unhealthy Compose dependencies, failed services and restart limits, failed cron jobs |
+| Network, TLS, the machine | 11 | Connection refused, timeouts, DNS, address in use, untrusted or expired certificates, permission denied, a full disk, too many open files, the OOM killer, clocks out of sync |
+| nginx and HTTP | 7 | Upstream refused, timed out or closed early, no live upstreams, body too large, 502s and 5xx responses |
+| Builds and CI | 19 | Maven and Gradle dependencies, compile errors and test failures, JDK too old, npm ERESOLVE, lock file out of sync and missing packages, TypeScript errors, pip, Go modules and compile errors, Docker build steps and missing files, GitHub Actions failures and timeouts |
+
+### AI providers (optional)
+
+| | |
+|---|---|
+| On your computer | [Ollama](https://ollama.com) with any model it runs; nothing leaves the machine |
+| Free cloud tiers | Groq, OpenRouter, Cerebras, Google Gemini |
+| Your own API key | Anthropic (Claude), OpenAI, Mistral, DeepSeek |
+| Your company's server | Any OpenAI-compatible URL |
+
+See [Investigating with AI](docs/ai.md).
+
+### Ways to use it
+
+| | |
+|---|---|
+| `culprit app.log` | The terminal viewer: follow, filter, open entries, the problems panel, AI with `i` |
+| `culprit --plain app.log` | Formatted text, for scripts and CI (automatic when the output isn't a terminal) |
+| `culprit analyze app.log` | A report: text, Markdown for a pull request, or JSON; `--fail-on error` fails a CI step |
+| `culprit investigate app.log` | An AI investigation of the likely root cause, in the terminal |
+| `culprit web app.log` | Everything in a browser tab, live, on 127.0.0.1 only |
+
+**Runs on:** Windows (x64), macOS (Apple Silicon and Intel) and Linux (x64 and arm64), as one program with
+nothing else to install.
 
 ## Install
 
@@ -402,8 +485,8 @@ rules/         culprit's own rules, compiled into the program
 ctest --test-dir build --output-on-failure
 ```
 
-The sample logs in [`testdata/`](testdata) cover every supported format, plus an incident where a failed
-migration takes down an app behind nginx, and [`testdata/kedai`](testdata/kedai) is the small project behind it.
+The sample logs in [`testdata/`](testdata) cover every supported format, plus two incidents (a failed
+migration that takes down an app behind nginx, and Redis running out of memory under a checkout flow), and [`testdata/kedai`](testdata/kedai) is the small project behind it.
 The web tests start the server and check that it answers nothing without its key or for another host,
 and what each API returns. The AI tests use a scripted model, and `tests/ai_e2e.sh` runs whole investigations over HTTP against a fake
 provider in both API formats, checking that secrets and files outside the project are never sent. The tests check what each one parses into (levels, loggers, threads,
@@ -412,7 +495,7 @@ built-in rule is checked against its examples. CI builds and tests on Windows, L
 
 ## Roadmap
 
-culprit was built in four steps:
+culprit was built in five steps:
 
 1. **The viewer** (0.1): reading, following, filtering, and pointing at your code.
 2. **The analyser** (0.2): rules that recognise common problems and say what to do, groups of repeated
@@ -420,7 +503,9 @@ culprit was built in four steps:
 3. **The investigator** (0.3): an AI of your choice (Ollama on your computer, a free cloud
    service, or your own API key) reads your project, read-only, and explains the root cause with evidence
    that culprit checks against your files.
-4. **The web viewer** (0.4, this release): all of it in a browser tab, live, on your own computer.
+4. **The web viewer** (0.4): all of it in a browser tab, live, on your own computer.
+5. **More rules** (0.5, this release): over 200, adding messaging and caches, calls between services,
+   more databases, .NET, PHP, Rails, deployment and build logs.
 
 ## License
 

@@ -1,0 +1,134 @@
+# Ruby on Rails: Active Record, Action Controller, credentials, and Ruby's own errors.
+
+[[rule]]
+id = "rails.pending-migrations"
+title = "Rails has migrations that haven't run"
+examples = [
+  "ActiveRecord::PendingMigrationError (Migrations are pending. To resolve this issue, run:\n\n        bin/rails db:migrate RAILS_ENV=development\n\n)",
+]
+severity = "critical"
+priority = 15
+tags = ["ruby", "rails", "migrations"]
+contains = ["activerecord::pendingmigrationerror", "migrations are pending"]
+explain = """
+The code has migrations the database hasn't run, so Rails refuses to serve requests until it's migrated."""
+fix = [
+  "Run them: bin/rails db:migrate",
+  "In production, run migrations as part of the deploy, before the new code takes traffic.",
+]
+
+[[rule]]
+id = "rails.pool-timeout"
+title = "Rails waited too long for a database connection"
+examples = [
+  'ActiveRecord::ConnectionTimeoutError (could not obtain a connection from the pool within 5.000 seconds (waited 5.001 seconds); all pooled connections were in use)',
+]
+severity = "error"
+priority = 15
+tags = ["ruby", "rails", "database", "connections"]
+contains = ["could not obtain a connection from the pool"]
+explain = """
+Every connection in Active Record's pool was in use for 5 seconds. The pool is smaller than the number of \
+threads that use it (Puma threads, Sidekiq concurrency), or connections are held by slow queries or code \
+that doesn't release them."""
+fix = [
+  "Make pool in database.yml at least as large as the threads: RAILS_MAX_THREADS for Puma, concurrency for Sidekiq.",
+  "Look for slow queries at the same time; they hold connections longer.",
+  "Code that starts its own threads must release connections: ActiveRecord::Base.connection_pool.with_connection { ... }",
+]
+
+[[rule]]
+id = "rails.no-database"
+title = "Rails database {database} doesn't exist"
+examples = [
+  'ActiveRecord::NoDatabaseError: We could not find your database: shop_development. Available database configurations can be found in config/database.yml.',
+]
+severity = "critical"
+priority = 16
+tags = ["ruby", "rails", "database", "startup"]
+contains = ["activerecord::nodatabaseerror"]
+regex = 'could not find your database: (\S+?)\.'
+captures = ["database"]
+explain = """
+The database server is reachable, but has no database named {database}."""
+fix = [
+  "Create it: bin/rails db:create, then bin/rails db:migrate (or db:prepare, which does both).",
+  "Check DATABASE_URL or config/database.yml for this environment.",
+]
+
+[[rule]]
+id = "rails.secret-key-base"
+title = "Rails has no secret_key_base"
+examples = [
+  "ArgumentError: Missing `secret_key_base` for 'production' environment, set this string with `bin/rails credentials:edit`",
+]
+severity = "critical"
+priority = 16
+tags = ["ruby", "rails", "config", "startup"]
+contains = ["missing `secret_key_base`", "missing secret_key_base"]
+explain = """
+Rails needs secret_key_base to sign cookies and sessions, and production has none: the credentials file \
+can't be decrypted (RAILS_MASTER_KEY isn't set) or doesn't contain it, and SECRET_KEY_BASE isn't set."""
+fix = [
+  "Set RAILS_MASTER_KEY (the content of config/master.key) on the server, or SECRET_KEY_BASE directly.",
+  "Never commit master.key; keep it in the deployment's secrets.",
+]
+
+[[rule]]
+id = "ruby.undefined-method-nil"
+title = "Ruby: called {method} on nil"
+examples = [
+  "NoMethodError (undefined method `name' for nil:NilClass):",
+  "NoMethodError: undefined method 'name' for nil",
+]
+severity = "error"
+priority = 15
+tags = ["ruby", "rails"]
+contains = ["for nil:nilclass", "for nil"]
+regex = "undefined method [`']([^'`]+)' for nil"
+captures = ["method"]
+explain = """
+Code called {method} on a value that was nil: a record that wasn't found (find_by returns nil), an \
+association that isn't set, or a missing parameter."""
+fix = [
+  "Look at the first line of the backtrace in your app and see what can be nil there.",
+  "Use find (which raises a 404) when the record must exist, or the safe navigation operator (&.) when it may not.",
+]
+
+[[rule]]
+id = "rails.invalid-authenticity-token"
+title = "Rails refused a form: invalid authenticity token"
+examples = [
+  "ActionController::InvalidAuthenticityToken (Can't verify CSRF token authenticity.):",
+]
+severity = "warning"
+priority = 15
+tags = ["ruby", "rails", "security"]
+contains = ["invalidauthenticitytoken", "can't verify csrf token authenticity"]
+explain = """
+A form or AJAX request came without a valid CSRF token, so Rails refused it (422). For one user it's an \
+expired session; for everyone, the session cookie isn't kept or the page is served from a cache."""
+fix = [
+  "Forms built with form_with include the token; JavaScript requests must send X-CSRF-Token from csrf_meta_tags.",
+  "Behind a proxy with HTTPS, check config.force_ssl and the X-Forwarded-Proto header, or the session cookie is dropped.",
+  "Don't cache pages that contain forms in a shared cache.",
+]
+
+[[rule]]
+id = "rails.record-not-found"
+title = "Rails: {model} not found"
+examples = [
+  "ActiveRecord::RecordNotFound (Couldn't find Order with 'id'=42):",
+]
+severity = "info"
+priority = 15
+tags = ["ruby", "rails"]
+contains = ["activerecord::recordnotfound"]
+regex = "Couldn't find (\\w+)"
+captures = ["model"]
+explain = """
+A request asked for a {model} that doesn't exist, and was answered 404. One-off ones are normal (old links, \
+typos); many for the same id point at a stale link or a record deleted while still referenced."""
+fix = [
+  "If it's unexpected, find what links to that id (the referrer, or the code building the URL).",
+]
