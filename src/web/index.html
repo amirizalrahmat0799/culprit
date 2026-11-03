@@ -158,9 +158,9 @@ dialog ul { padding-left: 18px; }
   <span class="title" id="title"></span>
   <span class="live" id="live"><span class="dot"></span><span id="liveText">connecting…</span></span>
   <span class="counts">
-    <span><b id="cTotal">0</b> entries</span>
-    <span class="e"><b id="cErr">0</b> errors</span>
-    <span class="w"><b id="cWarn">0</b> warnings</span>
+    <span><b id="cTotal">0</b> <span id="lTotal">entries</span></span>
+    <span class="e"><b id="cErr">0</b> <span id="lErr">errors</span></span>
+    <span class="w"><b id="cWarn">0</b> <span id="lWarn">warnings</span></span>
   </span>
 </header>
 <div class="bar">
@@ -210,6 +210,7 @@ dialog ul { padding-left: 18px; }
   const token = params.get("t") || "";
   const $ = (id) => document.getElementById(id);
   const fmt = (n) => Number(n).toLocaleString("en-US");
+  const plural = (n, one, many) => fmt(n) + " " + (n === 1 ? one : many);
 
   // ---- tiny DOM helper: text is always set as text, never parsed as HTML -------------------------------
   function h(tag, attrs, ...kids) {
@@ -249,15 +250,18 @@ dialog ul { padding-left: 18px; }
 
   // ---- talking to culprit -----------------------------------------------------------------------------
   class Stopped extends Error {}
-  async function api(path, body) {
-    const opts = { headers: { "X-Culprit-Token": token }, cache: "no-store" };
+  async function api(path, body, signal) {
+    const opts = { headers: { "X-Culprit-Token": token }, cache: "no-store", signal };
     if (body !== undefined) {
       opts.method = "POST";
       opts.headers["Content-Type"] = "application/json";
       opts.body = JSON.stringify(body);
     }
     let res;
-    try { res = await fetch(path, opts); } catch (e) { throw new Stopped("culprit isn't running"); }
+    try { res = await fetch(path, opts); } catch (e) {
+      if (e.name === "AbortError") throw e;
+      throw new Stopped("culprit isn't running");
+    }
     const data = await res.json().catch(() => ({ error: res.statusText }));
     data._status = res.status;
     return data;
@@ -282,9 +286,13 @@ dialog ul { padding-left: 18px; }
     document.title = "culprit · " + st.title;
     $("live").classList.toggle("on", st.following);
     $("liveText").textContent = st.following ? "live" : "read to the end";
+    const errs = st.levels.error + st.levels.fatal;
     $("cTotal").textContent = fmt(st.total);
-    $("cErr").textContent = fmt(st.levels.error + st.levels.fatal);
+    $("lTotal").textContent = st.total === 1 ? "entry" : "entries";
+    $("cErr").textContent = fmt(errs);
+    $("lErr").textContent = errs === 1 ? "error" : "errors";
     $("cWarn").textContent = fmt(st.levels.warn);
+    $("lWarn").textContent = st.levels.warn === 1 ? "warning" : "warnings";
     $("nProblems").textContent = st.problems ? String(st.problems) : "";
     const banner = $("banner");
     banner.textContent = st.errors.length ? st.errors.join(" · ") : "";
@@ -304,15 +312,30 @@ dialog ul { padding-left: 18px; }
     if (S.status.total === 0) $("empty").textContent = st.following ? "Waiting for log lines…" : "No log lines.";
   }
 
+  // A browser opens at most six connections to one site, and each waiting poll holds one; with six tabs open,
+  // a seventh would wait. So a tab in the background doesn't poll, and catches up when it's shown again.
+  let pollAbort = null, wakePoll = null;
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) { if (pollAbort) pollAbort.abort(); }
+    else if (wakePoll) wakePoll();
+  });
   async function poll() {
     let since = null;
     for (;;) {
+      if (document.hidden && since !== null) {
+        await new Promise((r) => { wakePoll = r; });
+        wakePoll = null;
+      }
       try {
-        const st = await api("/api/status" + (since === null ? "" : "?since=" + since));
+        pollAbort = new AbortController();
+        const st = await api("/api/status" + (since === null ? "" : "?since=" + since), undefined, pollAbort.signal);
+        pollAbort = null;
         if (st._status !== 200) throw new Stopped(st.error || "refused");
         since = st.seq;
         onStatus(st);
       } catch (e) {
+        pollAbort = null;
+        if (e.name === "AbortError") continue;  // hidden while waiting
         $("live").classList.remove("on");
         $("liveText").textContent = "disconnected";
         const b = $("banner");
@@ -535,7 +558,7 @@ dialog ul { padding-left: 18px; }
         h("span", { class: "mono" }, p.rule)),
       h("h3", null, p.title),
       p.explain && h("p", null, p.explain),
-      p.fix && p.fix.length && [h("div", { class: "sec" }, "What to do"), h("ol", null, p.fix.map((f) => h("li", null, f)))],
+      p.fix && p.fix.length > 0 && [h("div", { class: "sec" }, "What to do"), h("ol", null, p.fix.map((f) => h("li", null, f)))],
       // rule files can come with a project you cloned: link only to web pages, never javascript: or data:
       p.docs && /^https?:\/\//i.test(p.docs) && h("p", { class: "small" }, "More: ", h("a", { href: p.docs, target: "_blank", rel: "noopener noreferrer" }, p.docs)));
   }
@@ -553,10 +576,11 @@ dialog ul { padding-left: 18px; }
   // ---- analysis --------------------------------------------------------------------------------------------
   let reportTimer = 0;
   function loadReport() {
-    if (!S.status || S.reportSeq === S.status.seq || S.reportLoading) return;
-    // a busy log changes every moment; refresh the analysis at most every 1.5 s
-    clearTimeout(reportTimer);
+    if (!S.status || S.reportSeq === S.status.seq || S.reportLoading || reportTimer) return;
+    // a busy log changes every moment; refresh the analysis at most every 1.5 s. A refresh already waiting
+    // is left alone, so a steady stream of lines can't keep pushing it back.
     reportTimer = setTimeout(async () => {
+      reportTimer = 0;
       S.reportLoading = true;
       const seq = S.status.seq;
       try { S.report = await api("/api/report"); S.reportSeq = seq; renderReport(); } catch (e) {}
@@ -570,7 +594,7 @@ dialog ul { padding-left: 18px; }
     const r = S.report, pane = $("pane-analysis");
     const scroll = pane.scrollTop;
     const parts = [h("p", { class: "muted small", style: "margin-top:0" },
-      fmt(r.entries) + " entries · " + fmt(r.errors) + " errors · " + fmt(r.warnings) + " warnings")];
+      plural(r.entries, "entry", "entries") + " · " + plural(r.errors, "error", "errors") + " · " + plural(r.warnings, "warning", "warnings"))];
     if (r.root_cause) {
       const rc = r.root_cause;
       const isProblem = rc.kind === "problem";
@@ -585,7 +609,7 @@ dialog ul { padding-left: 18px; }
         h("h3", null, item.title),
         !isProblem && item.exception && item.exception !== item.title && h("pre", { class: "small" }, item.exception),
         isProblem && item.explain && h("p", null, item.explain),
-        isProblem && item.fix.length && [h("div", { class: "sec" }, "What to do"), h("ol", null, item.fix.map((f) => h("li", null, f)))],
+        isProblem && item.fix.length > 0 && [h("div", { class: "sec" }, "What to do"), h("ol", null, item.fix.map((f) => h("li", null, f)))],
         item.in_your_code && h("p", { class: "small" }, "In your code: ", h("code", null, item.in_your_code.file + ":" + item.in_your_code.line)),
         followers && h("p", { class: "small" }, followers),
         h("p", { class: "muted small" }, "Why this one: " + rc.why),
@@ -600,7 +624,7 @@ dialog ul { padding-left: 18px; }
         h("div", { class: "top" }, h("span", { class: "badge " + p.severity }, p.severity), h("span", { class: "ttl" }, p.title), h("span", { class: "cnt" }, "×" + fmt(p.count))),
         h("div", { class: "sub" }, "first ", jump(p.first), p.symptom ? " · usually a symptom" : ""),
         h("details", null, h("summary", null, "What it means and what to do"),
-          h("p", null, p.explain), p.fix.length && h("ol", null, p.fix.map((f) => h("li", null, f))),
+          h("p", null, p.explain), p.fix.length > 0 && h("ol", null, p.fix.map((f) => h("li", null, f))),
           h("div", { class: "actions" },
             h("button", { onclick: () => setFilter("problem:" + p.rule) }, "Show its entries"),
             aiUsable() && h("button", { onclick: () => investigate(p.first.index) }, "Investigate")))));
@@ -690,7 +714,7 @@ dialog ul { padding-left: 18px; }
     if (running) card.append(h("div", { class: "actions" }, h("button", { onclick: cancelInvestigation, disabled: inv.cancelling }, "Cancel")));
     if (inv.steps.length) {
       const steps = h("div", { class: "steps" }, inv.steps.map((s) => h("div", { class: s.kind }, s.text)));
-      card.append(f ? h("details", null, h("summary", { class: "muted small" }, inv.steps.length + " steps"), steps) : steps);
+      card.append(f ? h("details", null, h("summary", { class: "muted small" }, plural(inv.steps.length, "step", "steps")), steps) : steps);
     }
     if (f) card.append(findingEl(f));
     return card;
@@ -702,12 +726,12 @@ dialog ul { padding-left: 18px; }
       h("div", { class: "meta" }, h("span", { class: "badge " + f.confidence }, f.confidence + " confidence"), f.confidence_note && h("span", null, f.confidence_note)),
       h("h3", null, f.summary),
       f.explanation && f.explanation !== f.summary && h("pre", { style: "font-family:var(--sans);font-size:13px" }, f.explanation),
-      f.evidence.length && [h("div", { class: "sec" }, "Evidence"), f.evidence.map((e) => h("div", { class: "ev" },
+      f.evidence.length > 0 && [h("div", { class: "sec" }, "Evidence"), f.evidence.map((e) => h("div", { class: "ev" },
         h("div", { class: "where" }, h("span", { class: e.verified ? "yes" : "no", title: e.verified ? "checked against the file" : "not found in the file" }, e.verified ? "✓" : "✗"),
           h("span", null, e.file + (e.line ? ":" + e.line : ""))),
         e.note && h("div", { class: "note" }, e.note),
         e.quote && h("pre", null, e.quote)))],
-      f.fix.length && [h("div", { class: "sec" }, "What to do"), h("ol", null, f.fix.map((x) => h("li", null, x)))],
+      f.fix.length > 0 && [h("div", { class: "sec" }, "What to do"), h("ol", null, f.fix.map((x) => h("li", null, x)))],
       h("p", { class: "muted small" }, [f.steps + (f.steps === 1 ? " step" : " steps"), f.files_read.length + (f.files_read.length === 1 ? " file read" : " files read"),
         f.input_tokens || f.output_tokens ? fmt(f.input_tokens + f.output_tokens) + " tokens" : "", f.provider + (f.model ? " · " + f.model : "")]
         .filter(Boolean).join(" · ") + ". AI can be wrong; evidence marked ✓ was checked against the files."));

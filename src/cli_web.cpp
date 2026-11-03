@@ -122,6 +122,10 @@ int run_web(int argc, char** argv) {
     o.filter = filter;
     o.no_ai = no_ai;
     o.port = port;
+    o.on_read_error = [](const std::string& e) {
+        std::fprintf(stderr, "culprit: %s\n", e.c_str());
+        std::fflush(stderr);
+    };
     std::error_code ec;
     o.project_start = std::filesystem::current_path(ec).string();
 

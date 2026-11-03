@@ -113,7 +113,8 @@ struct Server::Impl {
     Options opt;
     std::string token = make_token();
     int port = 0;
-    httplib::Server http;
+    // a fresh one for every port tried: after a failed bind, cpp-httplib won't bind that object again
+    std::unique_ptr<httplib::Server> http;
     std::thread http_thread;
     std::atomic<bool> http_failed{false};
 
@@ -186,7 +187,7 @@ struct Server::Impl {
             if (running->worker.joinable()) running->worker.join();
         }
 #endif
-        http.stop();
+        if (http) http->stop();
         if (http_thread.joinable()) http_thread.join();
         if (pump.joinable()) pump.join();
         if (reader) {
@@ -227,6 +228,9 @@ struct Server::Impl {
             const bool finished = reader->finished();  // before take(): everything read by then is in it
             std::vector<Entry> batch = reader->take();
             std::vector<std::string> errors = reader->take_errors();
+            if (opt.on_read_error) {
+                for (const auto& e : errors) opt.on_read_error(e);
+            }
             std::lock_guard lock(mutex);
             if (stopping) return;
             bool any = !batch.empty() || !errors.empty();
@@ -323,9 +327,21 @@ struct Server::Impl {
     // ---- handlers -------------------------------------------------------------------------------------------
 
     void routes() {
-        http.set_payload_max_length(64 * 1024);
+        // cpp-httplib sets SO_REUSEPORT (Linux, macOS) or SO_REUSEADDR (Windows) by default, which lets a second
+        // culprit web, or any other program, listen on the same port: the browser's requests are then split
+        // between them, and on Windows another user's program could take them. Own the port alone instead.
+        http->set_socket_options([](socket_t sock) {
+#ifdef _WIN32
+            int one = 1;
+            setsockopt(sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&one), sizeof(one));
+#else
+            int one = 1;  // only so a restart can reuse the port while old connections close (TIME_WAIT)
+            setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+#endif
+        });
+        http->set_payload_max_length(64 * 1024);
 
-        http.set_pre_routing_handler([this](const Request& req, Response& res) {
+        http->set_pre_routing_handler([this](const Request& req, Response& res) {
             res.set_header("Cache-Control", "no-store");
             res.set_header("X-Content-Type-Options", "nosniff");
             res.set_header("Referrer-Policy", "no-referrer");
@@ -356,14 +372,14 @@ struct Server::Impl {
             return httplib::Server::HandlerResponse::Unhandled;
         });
 
-        http.Get("/", [](const Request&, Response& res) {
+        http->Get("/", [](const Request&, Response& res) {
             res.set_header("Content-Security-Policy",
                            "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; "
                            "img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
             res.set_content(reinterpret_cast<const char*>(kWebPage), kWebPage_size, "text/html; charset=utf-8");
         });
 
-        http.Get("/api/status", [this](const Request& req, Response& res) {
+        http->Get("/api/status", [this](const Request& req, Response& res) {
             const std::string ai = ai_json();  // reads ai.toml: outside the lock
             const auto since = number_param(req, "since");
             std::unique_lock lock(mutex);
@@ -374,7 +390,7 @@ struct Server::Impl {
             json_reply(res, status_json(ai));
         });
 
-        http.Get("/api/match", [this](const Request& req, Response& res) {
+        http->Get("/api/match", [this](const Request& req, Response& res) {
             Filter f = Filter::parse(req.get_param_value("filter"));
             if (!f.error().empty()) return error_reply(res, 200, f.error());
             const size_t from = static_cast<size_t>(number_param(req, "from").value_or(0));
@@ -399,7 +415,7 @@ struct Server::Impl {
             json_reply(res, s + "]}");
         });
 
-        http.Get("/api/rows", [this](const Request& req, Response& res) {
+        http->Get("/api/rows", [this](const Request& req, Response& res) {
             const std::string ids = req.get_param_value("ids");
             std::lock_guard lock(mutex);
             std::string s = "[";
@@ -418,14 +434,14 @@ struct Server::Impl {
             json_reply(res, s + "]");
         });
 
-        http.Get("/api/entry", [this](const Request& req, Response& res) {
+        http->Get("/api/entry", [this](const Request& req, Response& res) {
             const auto i = number_param(req, "i");
             std::lock_guard lock(mutex);
             if (!i || static_cast<size_t>(*i) >= entries.size()) return error_reply(res, 404, "No such entry");
             json_reply(res, entry_json(static_cast<uint32_t>(*i)));
         });
 
-        http.Get("/api/report", [this](const Request&, Response& res) {
+        http->Get("/api/report", [this](const Request&, Response& res) {
             std::lock_guard lock(mutex);
             if (report_seq != seq) {
                 report_cache = report_json(analyzer.report(), opt.title);
@@ -435,7 +451,7 @@ struct Server::Impl {
         });
 
 #ifdef CULPRIT_WITH_AI
-        http.Get("/api/investigation", [this](const Request&, Response& res) {
+        http->Get("/api/investigation", [this](const Request&, Response& res) {
             std::lock_guard lock(mutex);
             if (!inv) return json_reply(res, "{\"state\":\"none\"}");
             const auto end = inv->state == "running" ? std::chrono::steady_clock::now() : inv->ended;
@@ -454,9 +470,9 @@ struct Server::Impl {
             json_reply(res, s + "}");
         });
 
-        http.Post("/api/investigate", [this](const Request& req, Response& res) { investigate(req, res); });
+        http->Post("/api/investigate", [this](const Request& req, Response& res) { investigate(req, res); });
 
-        http.Post("/api/investigation/cancel", [this](const Request&, Response& res) {
+        http->Post("/api/investigation/cancel", [this](const Request&, Response& res) {
             std::lock_guard lock(mutex);
             if (inv && inv->state == "running") {
                 inv->cancel = true;
@@ -465,7 +481,7 @@ struct Server::Impl {
             json_reply(res, "{\"ok\":true}");
         });
 #else
-        http.Post("/api/investigate", [](const Request&, Response& res) {
+        http->Post("/api/investigate", [](const Request&, Response& res) {
             error_reply(res, 501, "This culprit was built without AI.");
         });
 #endif
@@ -560,31 +576,31 @@ std::string Server::url() const { return "http://127.0.0.1:" + std::to_string(im
 
 bool Server::start(std::string* error) {
     Impl& s = *impl_;
-    s.routes();
+    auto bind = [&s](int p) {
+        s.http = std::make_unique<httplib::Server>();
+        s.routes();
+        if (p > 0) return s.http->bind_to_port("127.0.0.1", p) ? p : 0;
+        return std::max(0, s.http->bind_to_any_port("127.0.0.1"));
+    };
     if (s.opt.port > 0) {
         // the usual port first, so the address stays the same between runs; then a few after it
-        for (int p = s.opt.port; p < s.opt.port + 10 && s.port == 0; ++p) {
-            if (s.http.bind_to_port("127.0.0.1", p)) s.port = p;
-        }
+        for (int p = s.opt.port; p < s.opt.port + 10 && p <= 65535 && s.port == 0; ++p) s.port = bind(p);
     }
+    if (s.port == 0) s.port = bind(0);
     if (s.port == 0) {
-        int p = s.http.bind_to_any_port("127.0.0.1");
-        if (p <= 0) {
-            if (error) *error = "can't listen on 127.0.0.1";
-            return false;
-        }
-        s.port = p;
+        if (error) *error = "can't listen on 127.0.0.1";
+        return false;
     }
     s.reader = std::make_unique<Reader>(s.opt.inputs, s.opt.follow);
     s.pump = std::thread([&s] { s.run_pump(); });
     s.http_thread = std::thread([&s] {
-        if (!s.http.listen_after_bind()) s.http_failed = true;
+        if (!s.http->listen_after_bind()) s.http_failed = true;
         {
             std::lock_guard lock(s.mutex);
         }
         s.changed.notify_all();
     });
-    s.http.wait_until_ready();
+    s.http->wait_until_ready();
     return true;
 }
 

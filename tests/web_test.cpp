@@ -165,3 +165,20 @@ TEST("web: a long poll returns when something changes, or after it waits") {
     CHECK(r && r->status == 200);
     CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(2));
 }
+
+TEST("web: a second server never shares the first one's port") {
+    Running first;
+    // ask for the port the first one has: the second must move to another, not share it
+    web::Options o = Running::options(first.log);
+    o.port = first.server.port();
+    web::Server second(o);
+    std::string error;
+    CHECK(second.start(&error));
+    CHECK(second.port() != first.server.port());
+    // and every request to the first port still reaches the first server
+    for (int i = 0; i < 20; ++i) {
+        auto r = first.client.Get("/api/status", first.auth);
+        CHECK(r && r->status == 200);
+    }
+    second.stop();
+}

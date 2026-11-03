@@ -20,6 +20,7 @@
 //   POST /api/investigate   {"index": N (optional), "confirm": true when the user agreed to send}
 //   POST /api/investigation/cancel
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -41,6 +42,8 @@ struct Options {
     bool no_ai = false;
     std::string project_start;  // where the project is looked for (the current folder)
     int port = 4790;      // tried first; another free port is used when it's taken. 0: any free port
+    /// Called (from a background thread) when an input can't be read, as well as showing it on the page.
+    std::function<void(const std::string&)> on_read_error;
 };
 
 class Server {
