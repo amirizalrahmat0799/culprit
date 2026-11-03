@@ -1,0 +1,75 @@
+name: Bug report
+description: Something culprit does wrong, crashes on, or explains wrongly
+title: "Bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! A few details make it much faster to fix.
+
+        **Security problem?** (reading logs through `culprit web` without its key, the AI reading files it
+        shouldn't, anything that exposes data) Please don't report it here: use
+        [private vulnerability reporting](https://github.com/amirizalrahmat0799/culprit/security/advisories/new) instead.
+
+        **A rule firing on a harmless line?** That's a bug too: pick "Rules" below.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where
+      options:
+        - The terminal viewer (culprit app.log)
+        - Plain output (--plain)
+        - culprit analyze
+        - culprit web
+        - AI (culprit investigate, culprit ai setup)
+        - Rules (a false alarm, or a wrong explanation)
+        - Installing or starting culprit
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: What you ran
+      description: The exact command, and how the logs got to culprit (a file, a pipe from docker compose or kubectl ...).
+      placeholder: docker compose logs -f | culprit --filter "level>=warn"
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+      description: A screenshot helps for anything on screen.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log lines that show it
+      description: |
+        The smallest piece of log that still shows the bug. **Remove anything private first**: hostnames,
+        IP addresses, user names, tokens, customer data.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: culprit version
+      description: The output of `culprit --version`
+      placeholder: culprit 0.5.0
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: Operating system, and the terminal or browser you used.
+      placeholder: Windows 11, Windows Terminal with PowerShell 7 / macOS 15, iTerm2 / Ubuntu 24.04, Firefox
+    validations:
+      required: true
+  - type: input
+    id: install
+    attributes:
+      label: How you installed it
+      placeholder: npm, Homebrew, a release download, built from source

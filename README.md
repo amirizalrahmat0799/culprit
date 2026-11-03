@@ -518,6 +518,12 @@ culprit was built in five steps:
    more databases, cloud credentials, payments, .NET, PHP, Rails, deployment and build logs, and labels for the
    harmless lines that look like errors.
 
+## Reporting bugs
+
+Found something wrong? Open a [bug report](https://github.com/amirizalrahmat0799/culprit/issues/new?template=bug-report.yml),
+or a [rule request](https://github.com/amirizalrahmat0799/culprit/issues/new?template=rule-request.yml) for an
+error culprit should know. Security problems go through [private reporting](SECURITY.md) instead.
+
 ## License
 
 [MIT](LICENSE) © Ahmad Amirizal Rahmat
