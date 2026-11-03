@@ -124,29 +124,99 @@ See [Investigating with AI](docs/ai.md).
 
 ## In your browser
 
-`culprit web` shows the same things in a browser tab: the log, following live, with the analysis beside it
+`culprit web` puts everything above in a browser tab: the log, following live, with the analysis beside it
 and the AI investigation a click away.
 
 ```bash
 culprit web app.log
 docker compose logs -f | culprit web
+kubectl logs -f deploy/api | culprit web --filter "level>=warn"
 ```
 
-![culprit web: the log, and the likely root cause beside it](docs/images/web.png)
+It prints an address and opens your browser. Press Ctrl+C in the terminal to stop it.
 
-It's for longer investigations, for wide logs that don't fit a terminal, and for showing someone else what
-went wrong. Filter with the same language as the viewer, click a problem to see its entries, open an entry for
-its fields and stack trace, and start an investigation from any error. The steps appear as the AI works, and
-the finding shows each quote with `✓` or `✗` after culprit has checked it against your files.
+![culprit web: the log on the left, the likely root cause on the right](docs/images/web.png)
+
+It's for longer investigations, for wide logs that don't fit a terminal, and for showing someone what went
+wrong. culprit itself is still the only thing you run: the page is built into it, and nothing else is
+installed or downloaded.
+
+### What went wrong
+
+The **Analysis** tab is `culprit analyze`, kept up to date as lines arrive: the likely root cause with how
+sure culprit is and why, what to do about it, and the errors that followed from it; then every known problem
+and every repeated error no rule knows. Click a time to jump to that entry, or **Show its entries** to filter
+the log down to it.
+
+### Every entry in full
+
+Click a line to open it: its fields, the stack trace with the frames in **your** code picked out, and, when
+a rule recognises it, what it means and what to do. **All like this** shows every entry with the same
+problem; **Same error elsewhere** shows the repeats of an error no rule knows.
+
+![An entry opened in culprit web: the rule's explanation and the stack trace, with your code's frame marked](docs/images/web-entry.png)
+
+### Filtering
+
+The filter box takes the same language as the terminal viewer ([Filters](#filters)), and what it matches is
+highlighted. The buttons beside it add the common ones: errors only, warnings and up, entries with a stack
+trace, and entries a rule recognised. A typo in a regular expression shows what's wrong and keeps the last
+results on screen.
+
+![Filtering culprit web to errors that mention orders, with the matches highlighted](docs/images/web-filter.png)
+
+### Asking the AI
+
+**Investigate with AI** is on the root cause, on every problem and error group, and on any entry you open.
+The steps appear as the AI works (which files it reads, what it searches for), and the finding shows the
+cause, what to do, and each quote from your files marked `✓` or `✗` after culprit has checked it.
 
 ![An AI finding in culprit web, with checked evidence](docs/images/web-ai.png)
 
-The page is part of the culprit program, and nothing is installed or downloaded. The server listens only on
-`127.0.0.1`, and the address culprit prints carries a random key: without it the server answers nothing, so
-other websites open in your browser and other users on your computer can't read your logs through it. It
-also refuses requests that name another host (DNS rebinding), and starting an investigation needs the key in
-a header that a page on another site can't send. Before anything goes to an AI that isn't on your computer,
-the page asks, as the terminal does.
+If the AI isn't on your computer, the page says exactly what would be sent, and to whom, before anything
+leaves it, as the terminal does.
+
+![culprit web asking before it sends anything to a cloud AI](docs/images/web-consent.png)
+
+### In a narrow window
+
+In a narrow window or on a small screen, the log and the panel stack.
+
+<img src="docs/images/web-phone.png" alt="culprit web on a narrow screen" width="300">
+
+### Logs on a server
+
+Run culprit on the server with `--no-open`, forward the port to your computer over SSH, and open the address
+it printed on your own computer. Keep the port number the same on both ends, because culprit checks it:
+
+```bash
+ssh -L 4790:127.0.0.1:4790 you@server
+culprit web --no-open /var/log/app.log      # on the server
+```
+
+### Keys in the page
+
+| Key | |
+|---|---|
+| `/` | Filter |
+| `↑` `↓` or `j` `k` | Move through the entries |
+| `n` `N` | Next or previous error |
+| `g` `G` | First or last entry (`G` follows new lines again) |
+| `a` | The analysis |
+| `i` | Investigate the selected entry with AI |
+| `Esc` | In the filter box: clear it |
+
+### Private to your computer
+
+Logs hold secrets, and any website open in your browser can send requests to `localhost`. So:
+
+- The server listens only on `127.0.0.1`, never on your network.
+- The address carries a random 128-bit key. Without it the server answers nothing, not even the page, so
+  other websites and other users on your computer can't read your logs through it. Don't share the address.
+- Requests naming another host are refused, which stops a malicious site from posing as this one (DNS
+  rebinding).
+- Starting an investigation needs the key in a header that a page on another site can't send.
+- Log text goes on the page as text, never as HTML, so a log line can't run code in it.
 
 ## What it does
 
