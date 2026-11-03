@@ -1,0 +1,64 @@
+# Lines that look like errors and usually aren't. Rules with severity "info" are listed last, never chosen
+# as the root cause, and don't count as errors, so they stop drowning out the real ones.
+
+[[rule]]
+id = "noise.client-disconnected"
+title = "A client disconnected before the response was sent"
+examples = [
+  'org.apache.catalina.connector.ClientAbortException: java.io.IOException: Broken pipe',
+  'org.springframework.web.context.request.async.AsyncRequestNotUsableException: ServletOutputStream failed to flush: java.io.IOException: Broken pipe',
+  'org.eclipse.jetty.io.EofException: Closed',
+]
+severity = "info"
+priority = 12
+tags = ["noise", "http"]
+contains = ["clientabortexception", "asyncrequestnotusableexception", "org.eclipse.jetty.io.eofexception"]
+level = "any"
+explain = """
+The browser or client closed the connection (the user left the page, a mobile network dropped, a timeout on \
+their side) while the server was still writing the response. Nothing failed on the server. Many at once can \
+mean the server is too slow, so clients give up."""
+fix = [
+  "Nothing to do for a few. If there are many, check how long those requests take, and the client's or proxy's timeout.",
+]
+
+[[rule]]
+id = "noise.no-static-resource"
+title = "No static resource {resource}"
+examples = [
+  '2026-11-04T10:00:00.120+08:00  WARN 1 --- [kedai] [nio-8080-exec-1] .w.s.m.s.DefaultHandlerExceptionResolver : Resolved [org.springframework.web.servlet.resource.NoResourceFoundException: No static resource favicon.ico.]',
+]
+severity = "info"
+priority = 12
+tags = ["noise", "spring", "http"]
+contains = ["noresourcefoundexception"]
+level = "any"
+regex = 'No static resource ([^.\]\s]+(?:\.[A-Za-z0-9]+)?)'
+captures = ["resource"]
+explain = """
+A request asked for {resource}, there's no controller or static file for it, and Spring answered 404. \
+Browsers ask for favicon.ico on their own, and scanners probe for common paths; neither is a problem."""
+fix = [
+  "Nothing to do unless it's a path your own pages link to.",
+  "To quiet favicon requests, add a favicon (src/main/resources/static/favicon.ico).",
+]
+
+[[rule]]
+id = "noise.telemetry-export"
+title = "Telemetry couldn't be exported"
+examples = [
+  '[otel.javaagent 2026-11-04 10:00:00:123 +0800] [OkHttp http://localhost:4318/...] WARN io.opentelemetry.exporter.internal.http.HttpExporter - Failed to export spans. The request could not be executed. Full error message: Failed to connect to localhost/127.0.0.1:4318',
+  'Transient error StatusCode.UNAVAILABLE encountered while exporting traces to localhost:4317, retrying in 1s.',
+]
+severity = "info"
+priority = 16
+tags = ["noise", "opentelemetry", "observability"]
+contains = ["failed to export spans", "failed to export metrics", "failed to export logs", "encountered while exporting traces", "encountered while exporting metrics", "encountered while exporting logs"]
+level = "any"
+explain = """
+The OpenTelemetry SDK or agent couldn't send traces, metrics or logs to the collector. The app itself is \
+fine; only the telemetry is lost. Locally it usually means no collector is running."""
+fix = [
+  "Locally, turn exporting off (OTEL_TRACES_EXPORTER=none, OTEL_METRICS_EXPORTER=none, OTEL_LOGS_EXPORTER=none) or run a collector.",
+  "In an environment that has one, check OTEL_EXPORTER_OTLP_ENDPOINT points at it.",
+]

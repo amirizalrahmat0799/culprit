@@ -1,4 +1,5 @@
 #include <fstream>
+#include <sstream>
 
 #include "check.hpp"
 #include "core/analyzer.hpp"
@@ -131,4 +132,29 @@ TEST("analyzer: Redis running out of memory is the root cause of the failed chec
     const Problem* breaker = find(r, "resilience4j.circuit-open");
     CHECK(breaker && breaker->title() == "Circuit breaker cart is open");
     CHECK(find(r, "spring.health-check-failed") != nullptr);
+}
+
+TEST("analyzer: harmless lines logged as errors don't count as errors") {
+    // a client hanging up, logged at ERROR by Tomcat, comes first; the real failure comes after
+    const std::string text =
+        "2026-11-04T10:00:00.000+08:00 ERROR 1 --- [kedai] [nio-8080-exec-1] o.a.c.c.C.[.[.[/].[dispatcherServlet]    : Servlet.service() threw exception\n"
+        "org.apache.catalina.connector.ClientAbortException: java.io.IOException: Broken pipe\n"
+        "2026-11-04T10:00:01.000+08:00 ERROR 1 --- [kedai] [main] c.e.kedai.orders.OrderService : Order 42 failed\n"
+        "java.lang.IllegalStateException: stock is negative\n"
+        "\tat com.example.kedai.orders.OrderService.place(OrderService.java:87)\n";
+    Parser p;
+    std::vector<Entry> entries;
+    std::istringstream in(text);
+    std::string line;
+    while (std::getline(in, line)) p.feed(line, entries);
+    p.flush(entries);
+    Analyzer a(RuleSet::builtin());
+    for (size_t i = 0; i < entries.size(); ++i) a.add(entries[i], static_cast<uint32_t>(i));
+    Report r = a.report();
+    const Problem* noise = find(r, "noise.client-disconnected");
+    CHECK(noise != nullptr);
+    // it's listed, last, but it isn't the first error and isn't the root cause
+    if (noise) CHECK(&r.problems.back() == noise);
+    CHECK(r.first_error.has_value() && r.first_error->index == 1);
+    CHECK(r.root.has_value() && r.root->kind == RootCause::Kind::Group);
 }

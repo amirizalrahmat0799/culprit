@@ -220,3 +220,83 @@ fix = [
   "Look for streams or sockets that are never closed.",
   "Check the limit with ulimit -n and raise it if the load really needs it.",
 ]
+
+[[rule]]
+id = "prisma.unreachable"
+title = "Prisma can't reach the database"
+examples = [
+  "PrismaClientInitializationError: Can't reach database server at `localhost:5432`",
+  "Error: P1001: Can't reach database server at `db:5432`",
+]
+severity = "error"
+symptom = true
+priority = 15
+tags = ["node", "prisma", "database", "connections"]
+contains = ["can't reach database server at", "p1001"]
+explain = """
+Prisma couldn't open a connection to the database in DATABASE_URL: it's down or still starting, the host or \
+port is wrong (localhost inside a container), or a firewall blocks it."""
+fix = [
+  "Check DATABASE_URL in this environment.",
+  "Check the database answers from where the app runs (psql, mysql, or nc -vz <host> <port>).",
+  "For a hosted database, check it allows connections from this machine, and whether it needs ?sslmode=require.",
+]
+
+[[rule]]
+id = "prisma.unique-constraint"
+title = "Prisma: unique constraint failed on {fields}"
+examples = [
+  "PrismaClientKnownRequestError: Unique constraint failed on the fields: (`email`)",
+]
+severity = "error"
+priority = 15
+tags = ["node", "prisma", "database"]
+contains = ["unique constraint failed on the"]
+regex = 'Unique constraint failed on the (?:fields|constraint): \(?([^)\n]+)\)?'
+captures = ["fields"]
+explain = """
+A create or update would have stored a value in {fields} that already exists (Prisma error P2002). Usually a \
+double submit, a retry, or a check-then-create race."""
+fix = [
+  "Catch error code P2002 and answer a conflict (409) when the value can legitimately exist.",
+  "Use upsert instead of find-then-create.",
+]
+
+[[rule]]
+id = "prisma.record-not-found"
+title = "Prisma: the record to change doesn't exist"
+examples = [
+  "PrismaClientKnownRequestError: An operation failed because it depends on one or more records that were required but not found. Record to update not found.",
+  "PrismaClientKnownRequestError: No record was found for an update.",
+]
+severity = "warning"
+priority = 15
+tags = ["node", "prisma", "database"]
+contains = ["record to update not found", "record to delete does not exist", "no record was found for an update", "no record was found for a delete"]
+explain = """
+An update or delete named a record that doesn't exist (Prisma error P2025): it was deleted already, or the \
+id or where condition is wrong."""
+fix = [
+  "Catch P2025 and answer 404 when the record may legitimately be gone.",
+  "Use updateMany/deleteMany when 'nothing matched' is fine.",
+]
+
+[[rule]]
+id = "node.orm-connection"
+title = "Sequelize or TypeORM can't connect to the database"
+examples = [
+  "SequelizeConnectionRefusedError: connect ECONNREFUSED 127.0.0.1:5432",
+  "[Nest] 1  - 11/04/2026, 10:00:00 AM   ERROR [TypeOrmModule] Unable to connect to the database. Retrying (1)...",
+]
+severity = "error"
+symptom = true
+priority = 15
+tags = ["node", "database", "connections"]
+contains = ["sequelizeconnectionrefusederror", "sequelizeconnectionerror", "sequelizehostnotfounderror", "unable to connect to the database"]
+explain = """
+The ORM couldn't open a connection to the database: it's down or still starting, or the host, port or \
+credentials in the configuration are wrong for this environment."""
+fix = [
+  "Check the database settings the app uses (host, port, user, database) in this environment.",
+  "Check the database answers from where the app runs; inside Docker use the service name, not localhost.",
+]

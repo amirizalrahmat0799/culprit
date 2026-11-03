@@ -1,0 +1,59 @@
+# Infrastructure tools in deploy and CI logs: Terraform, Helm, Ansible.
+
+[[rule]]
+id = "terraform.state-lock"
+title = "Terraform state is locked by another run"
+examples = [
+  'Error: Error acquiring the state lock',
+]
+severity = "error"
+priority = 15
+tags = ["terraform", "ci", "deploy"]
+contains = ["error acquiring the state lock"]
+explain = """
+Another Terraform run holds the lock on this state, or a run that crashed or was cancelled never released \
+it. The lock info under the message says who took it and when."""
+fix = [
+  "If another run is in progress, wait for it.",
+  "If the run that holds it is dead, release it: terraform force-unlock <lock id> (only when you're sure nothing is running).",
+  "In CI, stop two pipelines applying the same state at once (a concurrency group).",
+]
+
+[[rule]]
+id = "helm.operation-in-progress"
+title = "Helm release is stuck in another operation"
+examples = [
+  'Error: UPGRADE FAILED: another operation (install/upgrade/rollback) is in progress',
+]
+severity = "error"
+priority = 15
+tags = ["helm", "kubernetes", "deploy"]
+contains = ["another operation (install/upgrade/rollback) is in progress"]
+explain = """
+Helm thinks an install, upgrade or rollback of this release is still running. Usually an earlier one was \
+interrupted (a cancelled CI job, a timeout), leaving the release in a pending state."""
+fix = [
+  "See the release's state: helm history <release> -n <namespace> (look for pending-upgrade or pending-install).",
+  "If nothing is really running, roll back to the last deployed revision: helm rollback <release> <revision>.",
+  "Use --atomic and a --timeout in CI, so a failed upgrade rolls back instead of staying pending.",
+]
+
+[[rule]]
+id = "ansible.unreachable"
+title = "Ansible can't reach {host}"
+examples = [
+  'fatal: [web-1]: UNREACHABLE! => {"changed": false, "msg": "Failed to connect to the host via ssh: ssh: connect to host 10.0.1.21 port 22: Connection timed out", "unreachable": true}',
+]
+severity = "error"
+priority = 15
+tags = ["ansible", "deploy"]
+contains = ["unreachable! =>"]
+regex = 'fatal: \[([^\]]+)\]: UNREACHABLE'
+captures = ["host"]
+explain = """
+Ansible couldn't log in to {host} over SSH, so nothing ran there. The host is down, the address in the \
+inventory is wrong, port 22 is blocked, or the SSH user or key is refused (the msg says which)."""
+fix = [
+  "Try the same login by hand: ssh -i <key> <user>@<host>",
+  "Check the inventory address, ansible_user and the private key the run uses.",
+]

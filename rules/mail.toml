@@ -1,0 +1,43 @@
+# Sending email over SMTP: Spring Mail / Jakarta Mail, nodemailer, Python's smtplib.
+
+[[rule]]
+id = "smtp.auth-failed"
+title = "The mail server refused the login"
+examples = [
+  'org.springframework.mail.MailAuthenticationException: Authentication failed',
+  'Error: Invalid login: 535-5.7.8 Username and Password not accepted. For more information, go to https://support.google.com/mail/?p=BadCredentials',
+  "smtplib.SMTPAuthenticationError: (535, b'5.7.8 Username and Password not accepted.')",
+]
+severity = "error"
+priority = 15
+tags = ["email", "smtp", "auth"]
+contains = ["mailauthenticationexception", "smtpauthenticationerror", "invalid login: 535", "535 5.7.8", "535-5.7.8", "authentication unsuccessful"]
+explain = """
+The SMTP server rejected the username or password. With Gmail or Microsoft 365, a normal account password \
+is refused: they need an app password, OAuth, or SMTP AUTH turned on for the mailbox."""
+fix = [
+  "Check the SMTP username and password the app uses in this environment.",
+  "Gmail: use an app password (with 2-step verification on). Microsoft 365: enable SMTP AUTH for the mailbox, or use OAuth.",
+  "Or send through a mail service (SES, SendGrid, Mailgun) with its SMTP credentials.",
+]
+
+[[rule]]
+id = "smtp.unreachable"
+title = "Can't connect to the mail server"
+examples = [
+  "org.springframework.mail.MailSendException: Mail server connection failed. Failed messages: org.eclipse.angus.mail.util.MailConnectException: Couldn't connect to host, port: smtp.example.com, 587; timeout -1",
+  "Error: connect ETIMEDOUT 74.125.24.108:587 { code: 'ESOCKET', command: 'CONN' }",
+]
+severity = "error"
+symptom = true
+priority = 15
+tags = ["email", "smtp", "connections"]
+contains = ["mail server connection failed", "mailconnectexception", "command: 'conn'"]
+explain = """
+The app couldn't open a connection to the SMTP server. The host or port is wrong, or the network blocks it: \
+many cloud providers block outgoing port 25, and some networks block 465 and 587 too."""
+fix = [
+  "Check the host and port (587 with STARTTLS, or 465 with TLS; avoid 25 from cloud servers).",
+  "Test from the same machine: nc -vz <host> 587",
+  "Set connection and read timeouts (spring.mail.properties.mail.smtp.connectiontimeout ...); the default waits forever.",
+]

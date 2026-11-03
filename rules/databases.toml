@@ -396,3 +396,22 @@ fix = [
   "For sequences behind serial or identity columns: GRANT USAGE ON SEQUENCE <seq> TO <app_user>;",
   "To cover tables created later: ALTER DEFAULT PRIVILEGES ... GRANT ... TO <app_user>;",
 ]
+
+[[rule]]
+id = "mysql.public-key-retrieval"
+title = "MySQL driver refuses to fetch the server's public key"
+examples = [
+  "java.sql.SQLNonTransientConnectionException: Public Key Retrieval is not allowed",
+]
+severity = "critical"
+priority = 16
+tags = ["mysql", "database", "auth", "startup"]
+contains = ["public key retrieval is not allowed"]
+explain = """
+MySQL 8 logs in with caching_sha2_password. Over an unencrypted connection, the driver must fetch the server's \
+public key to send the password, and Connector/J won't unless told to. It often appears after a fresh MySQL 8 \
+install or a password change, and goes away once the server has cached the login."""
+fix = [
+  "Use SSL (useSSL=true, or sslMode=REQUIRED) so no public key is needed.",
+  "Or, on a trusted network, allow it: add allowPublicKeyRetrieval=true to the JDBC URL.",
+]

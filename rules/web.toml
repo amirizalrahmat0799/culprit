@@ -141,3 +141,90 @@ application's own log for the same request."""
 fix = [
   "Match the time (or a request id) with the application's error log.",
 ]
+
+[[rule]]
+id = "nginx.upstream-header-too-big"
+title = "The app's response headers are too big for nginx"
+examples = [
+  '2026/11/04 02:00:00 [error] 29#29: *812 upstream sent too big header while reading response header from upstream, client: 172.18.0.1, server: shop.example.com, request: "GET /account HTTP/1.1", upstream: "http://172.18.0.3:8080/account"',
+]
+severity = "error"
+priority = 15
+tags = ["nginx", "proxy"]
+contains = ["upstream sent too big header"]
+level = "any"
+explain = """
+The app's response headers didn't fit in nginx's proxy buffer (4 or 8 KB by default), so nginx answered 502. \
+Usually big cookies or tokens: a session cookie holding a JWT, or many Set-Cookie headers."""
+fix = [
+  "Raise the buffers in the location: proxy_buffer_size 16k; proxy_buffers 8 16k; (fastcgi_buffer_size for PHP-FPM).",
+  "Better, make the headers smaller: keep tokens out of cookies, or store the session server-side.",
+]
+
+[[rule]]
+id = "nginx.worker-connections"
+title = "nginx ran out of connections ({count} per worker)"
+examples = [
+  '2026/11/04 02:00:00 [alert] 29#29: 1024 worker_connections are not enough',
+]
+severity = "critical"
+priority = 15
+tags = ["nginx", "proxy", "performance"]
+contains = ["worker_connections are not enough"]
+level = "any"
+regex = '(\d+) worker_connections are not enough'
+captures = ["count"]
+explain = """
+Every worker had {count} connections open, so nginx refused more. Each proxied request uses two (client and \
+upstream), so the real limit is about half. Either traffic grew, or slow upstreams keep connections open \
+longer."""
+fix = [
+  "Raise worker_connections in the events block, and the open-files limit to match (worker_rlimit_nofile).",
+  "Check the upstreams aren't slow: slow responses hold connections.",
+]
+
+[[rule]]
+id = "envoy.no-healthy-upstream"
+title = "The proxy has no healthy instance to send to"
+examples = [
+  'upstream connect error or disconnect/reset before headers. reset reason: connection failure, transport failure reason: delayed connect error: 111',
+  'no healthy upstream',
+]
+severity = "error"
+symptom = true
+priority = 12
+tags = ["envoy", "istio", "proxy", "kubernetes"]
+contains = ["no healthy upstream", "upstream connect error or disconnect/reset before headers"]
+level = "any"
+explain = """
+Envoy (or Istio's sidecar, or a gateway built on it) had no healthy instance of the service to send the \
+request to, or couldn't connect to the one it picked, and answered 503. The service's pods are down, not \
+ready, or failing their health checks."""
+fix = [
+  "Check the service has ready endpoints: kubectl get endpoints <service>",
+  "Check the pods' readiness probes and logs.",
+  "With Istio, check the sidecar can reach the pod: istioctl proxy-status, and the DestinationRule's TLS mode.",
+]
+
+[[rule]]
+id = "haproxy.no-server"
+title = "HAProxy backend {backend} has no server available"
+examples = [
+  "[ALERT]    (8) : backend 'api' has no server available!",
+  "Server api/api-1 is DOWN, reason: Layer4 connection problem, info: \"Connection refused\", check duration: 0ms. 0 active and 0 backup servers left.",
+]
+severity = "critical"
+symptom = true
+priority = 15
+tags = ["haproxy", "proxy"]
+contains = ["has no server available", "0 active and 0 backup servers left"]
+level = "any"
+regex = "(?:backend '|Server )([^/']+)"
+captures = ["backend"]
+explain = """
+Every server in the HAProxy backend {backend} failed its health checks, so HAProxy answers 503 for it. The \
+reason for each server going down is in the lines just before."""
+fix = [
+  "Look at the 'is DOWN, reason:' lines for each server.",
+  "Check the servers themselves, and that the health check (option httpchk) asks for a path that answers 200.",
+]

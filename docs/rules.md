@@ -1,7 +1,7 @@
 # Writing rules
 
 A rule teaches culprit to recognise one problem in a log and explain it: what it means, and what to do.
-culprit ships with over two hundred (`culprit rules` lists them). You can add your own for the problems your
+culprit ships with over 250 (`culprit rules` lists them). You can add your own for the problems your
 team keeps meeting: an error from an internal library, a payment provider's decline code, a misconfiguration
 that only your setup has.
 
@@ -104,6 +104,12 @@ reported with the file and line:
 .culprit/rules/kedai.toml:14: {reason} isn't one of the captures
 .culprit/rules/kedai.toml:31: kedai.refund-stuck example 1 is recognised by java.npe instead (raise this rule's priority?)
 ```
+
+## Asking for a rule
+
+If culprit misses an error you think it should know, open a
+[rule request](https://github.com/amirizalrahmat0799/culprit/issues/new?template=rule-request.yml) with the log
+lines (with anything private removed) and, if you found it, what fixed it.
 
 ## Tips
 

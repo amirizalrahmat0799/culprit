@@ -1,0 +1,98 @@
+# Payments: Stripe's API and webhooks (Java, Node, Python, PHP SDKs).
+
+[[rule]]
+id = "stripe.card-declined"
+title = "Stripe: a card was declined"
+examples = [
+  'com.stripe.exception.CardException: Your card was declined.; code: card_declined; request-id: req_7Qx2b9LmN3pR',
+  'StripeCardError: Your card has insufficient funds.',
+]
+severity = "info"
+priority = 15
+tags = ["stripe", "payments"]
+contains = ["cardexception", "stripecarderror", "stripe.error.carderror", "stripe\\exception\\cardexception"]
+explain = """
+The customer's bank declined the card. That's an outcome, not a bug: the payment didn't go through and the \
+customer has to try another card. Many declines at once, or for every card, point at something on your side \
+(test cards in live mode, Radar rules, a wrong currency)."""
+fix = [
+  "Show the customer the decline message and let them try another card; don't retry the same card automatically.",
+  "If many are declined, look at the decline codes and Radar in the Stripe Dashboard.",
+]
+
+[[rule]]
+id = "stripe.webhook-signature"
+title = "Stripe webhook signature didn't verify"
+examples = [
+  'com.stripe.exception.SignatureVerificationException: No signatures found matching the expected signature for payload',
+  'StripeSignatureVerificationError: No signatures found matching the expected signature for payload. Are you passing the raw request body you received from Stripe?',
+]
+severity = "error"
+priority = 18
+tags = ["stripe", "payments", "webhooks"]
+contains = ["no signatures found matching the expected signature for payload", "signatureverificationexception", "stripesignatureverificationerror"]
+explain = """
+A webhook arrived, and its signature didn't match: so its events weren't processed, and Stripe will keep \
+retrying it. Almost always one of two things: the code verifies a parsed-and-reserialized body instead of \
+the raw bytes Stripe sent, or it uses the signing secret of another endpoint or mode (test vs live, or the \
+Stripe CLI's)."""
+fix = [
+  "Verify against the raw request body: in Express, express.raw({type: 'application/json'}) on the webhook route; in Spring, read the body as a String before any JSON binding.",
+  "Use the signing secret (whsec_...) of this exact endpoint and mode, from the Dashboard (or from stripe listen when testing with the CLI).",
+]
+
+[[rule]]
+id = "stripe.idempotency-key-reused"
+title = "Stripe: idempotency key reused with different parameters"
+examples = [
+  "com.stripe.exception.IdempotencyException: Keys for idempotent requests can only be used with the same parameters they were first used with. Try using a key other than 'order-42' if you meant to execute a different request.",
+]
+severity = "error"
+priority = 18
+tags = ["stripe", "payments"]
+contains = ["keys for idempotent requests can only be used with the same parameters", "idempotencyexception", "stripeidempotencyerror"]
+explain = """
+The same idempotency key was sent with a different request (another amount, customer or currency). Stripe \
+refuses, so a retry can never charge twice. Usually the key is too coarse (one per order, while the amount \
+changed) or reused across operations."""
+fix = [
+  "Derive the key from everything that makes the request unique (e.g. the order id and its current version or amount).",
+  "Use a new key when the request really changed; keep the same key only for retries of the identical request.",
+]
+
+[[rule]]
+id = "stripe.rate-limited"
+title = "Stripe rate-limited the requests"
+examples = [
+  'com.stripe.exception.RateLimitException: Request rate limit exceeded. Learn more about rate limits here https://stripe.com/docs/rate-limits.; request-id: req_9Tz1',
+  'StripeRateLimitError: Too many requests hit the API too quickly.',
+]
+severity = "warning"
+priority = 15
+tags = ["stripe", "payments", "limits"]
+contains = ["stripe.exception.ratelimitexception", "striperatelimiterror", "stripe.error.ratelimiterror", "too many requests hit the api too quickly"]
+explain = """
+The account sent more requests per second than Stripe allows (lower in test mode than in live mode). Usually \
+a batch job or a backfill without throttling, or a retry loop."""
+fix = [
+  "Throttle batch jobs and backfills, and retry 429s with exponential backoff (the SDKs can: maxNetworkRetries).",
+  "Cache objects you read often instead of fetching them from Stripe every time.",
+]
+
+[[rule]]
+id = "stripe.invalid-api-key"
+title = "Stripe API key is invalid"
+examples = [
+  'com.stripe.exception.AuthenticationException: Invalid API Key provided: sk_test_****************************1234',
+]
+severity = "critical"
+priority = 18
+tags = ["stripe", "payments", "config"]
+contains = ["invalid api key provided"]
+explain = """
+Stripe didn't accept the secret key: it's mistyped, revoked or rolled, or a test key is used against live \
+objects (or the reverse)."""
+fix = [
+  "Check the key in this environment's configuration (sk_test_ for test mode, sk_live_ for live).",
+  "If it was rolled in the Dashboard, deploy the new one.",
+]

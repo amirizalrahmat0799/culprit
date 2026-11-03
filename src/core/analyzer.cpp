@@ -173,7 +173,10 @@ void Analyzer::add(Entry& e, uint32_t index) {
             if (std::find(p.variants.begin(), p.variants.end(), t) == p.variants.end()) p.variants.push_back(std::move(t));
         }
         add_source(p.sources, e.source);
-        const bool serious = error_level || m->rule->severity >= Severity::Error;
+        // a rule of severity info says the line is harmless (a client that hung up), even when it's logged as an
+        // error: it doesn't count as an error, so it's never the first error and never follows a root cause
+        const bool harmless = m->rule->severity == Severity::Info;
+        const bool serious = !harmless && (error_level || m->rule->severity >= Severity::Error);
         if (serious || e.level == Level::Warn || m->rule->severity == Severity::Warning) {
             events_.push_back(Event{index, e.epoch_ms, e.time_zoned, source_id(e.source), static_cast<int32_t>(it->second), 0, serious});
         }

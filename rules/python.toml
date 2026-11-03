@@ -173,3 +173,89 @@ the app or another service on the same port."""
 fix = [
   "Find it: lsof -i :<port> or ss -ltnp, and stop it, or start this one on another port.",
 ]
+
+[[rule]]
+id = "gunicorn.worker-timeout"
+title = "gunicorn killed a worker that took too long"
+examples = [
+  "[2026-11-04 10:00:31 +0000] [1] [CRITICAL] WORKER TIMEOUT (pid:42)",
+]
+severity = "error"
+priority = 15
+tags = ["python", "gunicorn"]
+contains = ["worker timeout (pid:"]
+level = "any"
+explain = """
+A worker handled one request for longer than gunicorn's timeout (30 seconds by default), so gunicorn killed \
+it and the request failed. The request was waiting on something slow (a database query, another service), \
+or the work belongs in a background job."""
+fix = [
+  "Find the slow request: the access log entry for that worker's request is missing, and the one just before it in the app log is the suspect.",
+  "Give outgoing calls their own timeouts, shorter than gunicorn's.",
+  "Move slow work to a queue (Celery, RQ); raise --timeout only for endpoints that are slow on purpose.",
+  "With async frameworks, use an async worker class (uvicorn.workers.UvicornWorker) so one slow call doesn't block the worker.",
+]
+
+[[rule]]
+id = "django.disallowed-host"
+title = "Django refused the Host {host}"
+examples = [
+  "django.core.exceptions.DisallowedHost: Invalid HTTP_HOST header: 'shop.example.com'. You may need to add 'shop.example.com' to ALLOWED_HOSTS.",
+]
+severity = "warning"
+priority = 15
+tags = ["python", "django", "config"]
+contains = ["invalid http_host header"]
+regex = "Invalid HTTP_HOST header: '([^']+)'"
+captures = ["host"]
+explain = """
+A request came for {host}, which isn't in ALLOWED_HOSTS, so Django answered 400. If {host} is your site, \
+ALLOWED_HOSTS is missing it; if it's an IP address or a name you don't own, it's a scanner and can be \
+ignored."""
+fix = [
+  "Add your real domains to ALLOWED_HOSTS (and the load balancer's health check host, if it uses one).",
+  "Behind a proxy, check it passes the original Host header.",
+  "Ignore requests for hosts you don't own; don't use ALLOWED_HOSTS = ['*'] in production.",
+]
+
+[[rule]]
+id = "celery.broker-unreachable"
+title = "Celery can't reach its broker"
+examples = [
+  "[2026-11-04 10:00:00,120: ERROR/MainProcess] consumer: Cannot connect to amqp://guest:**@127.0.0.1:5672//: [Errno 111] Connection refused.",
+  "[2026-11-04 10:00:00,120: ERROR/MainProcess] consumer: Cannot connect to redis://localhost:6379/0: Error 111 connecting to localhost:6379. Connection refused..",
+]
+severity = "error"
+symptom = true
+priority = 18
+tags = ["python", "celery", "messaging"]
+contains = ["consumer: cannot connect to"]
+explain = """
+The Celery worker couldn't connect to the broker (RabbitMQ or Redis), so no tasks run and tasks sent by the \
+app pile up or fail. The broker is down, or CELERY_BROKER_URL points at the wrong host (localhost inside a \
+container)."""
+fix = [
+  "Check the broker is up and reachable from the worker.",
+  "Check the broker URL the worker uses; in Docker use the service name.",
+]
+
+[[rule]]
+id = "celery.time-limit"
+title = "A Celery task ran past its time limit"
+examples = [
+  "[2026-11-04 10:05:00,004: ERROR/MainProcess] Hard time limit (300s) exceeded for reports.export[3f2b1c4e-7d6a-4e1b-9c8f-2a1b3c4d5e6f]",
+  "celery.exceptions.SoftTimeLimitExceeded: SoftTimeLimitExceeded()",
+]
+severity = "error"
+priority = 15
+tags = ["python", "celery"]
+contains = ["time limit (", "softtimelimitexceeded", "timelimitexceeded"]
+regex = '((?:Hard|Soft) time limit \(\d+(?:\.\d+)?s\) exceeded|SoftTimeLimitExceeded|TimeLimitExceeded)'
+explain = """
+A task ran longer than its time limit. At the soft limit the task gets SoftTimeLimitExceeded and can clean \
+up; at the hard limit the worker process is killed and the task is lost (or retried, with acks_late)."""
+fix = [
+  "Find what made it slow: the task's own log lines, and the services it called.",
+  "Split big tasks into smaller ones (chunks, a chord or group).",
+  "Catch SoftTimeLimitExceeded to save progress, and set the hard limit a bit above the soft one.",
+]

@@ -35,14 +35,16 @@ Press `a` in the viewer for the problems it found:
 
 ![The Problems panel: a failed migration marked as the root cause of the 502s that followed](docs/images/problems.png)
 
-- **It recognises known problems.** Over 200 rules cover:
+- **It recognises known problems.** Over 250 rules cover:
   - **Java and Spring:** Spring Boot, Hibernate, Flyway and Liquibase, HikariCP, the JVM, and calls between
     services (OpenFeign, RestTemplate, WebClient, Resilience4j, Eureka, Spring Cloud Config, Spring Security
     and JWTs).
   - **Databases:** Oracle (ORA- errors), PostgreSQL, MySQL, SQL Server, MongoDB and Elasticsearch.
-  - **Messaging and caches:** Kafka, RabbitMQ and Redis.
+  - **Messaging, caches and calls:** Kafka, RabbitMQ, Redis, gRPC, and SMTP for email.
+  - **Cloud and payments:** AWS, Google Cloud and Azure credentials and limits, and Stripe.
   - **Other languages:** .NET and Entity Framework Core, PHP and Laravel, Ruby on Rails, Node, Python and Go.
-  - **Where it runs:** Docker and Compose, Kubernetes (scheduling, volumes, RBAC), systemd, cron, nginx.
+  - **Where it runs:** Docker and Compose, Kubernetes (scheduling, volumes, RBAC), systemd, cron, nginx,
+    Envoy and HAProxy, Terraform, Helm and Ansible.
   - **Builds and CI:** Maven, Gradle, npm, TypeScript, pip, Go, Docker builds and GitHub Actions, so
     `culprit analyze` on a failed CI log points at the step that broke.
 
@@ -242,7 +244,7 @@ Logs hold secrets, and any website open in your browser can send requests to `lo
 - **Filters as you type.** Words, phrases, levels, fields and regular expressions, all at once.
 - **Lines up services.** Several files or Compose services get a source column, and timestamps from different
   time zones are all shown in your local time.
-- **Explains what went wrong.** Recognises over 200 known problems, finds the likely root cause, and groups
+- **Explains what went wrong.** Recognises over 250 known problems, finds the likely root cause, and groups
   repeated errors. See [Finding the cause](#finding-the-cause).
 - **Copes with big logs.** A million lines (118 MB) open in a couple of seconds, and filtering them while you
   type stays instant.
@@ -274,14 +276,16 @@ languages' traces stay attached to their entry as text.
 
 ### Problems it recognises
 
-217 built-in rules. Each explains the problem with the values from your log filled in, and says what to do.
-List them with `culprit rules`, or [write your own](docs/rules.md).
+257 built-in rules. Each explains the problem with the values from your log filled in, and says what to do.
+List them with `culprit rules`, or [write your own](docs/rules.md). Is a common error missing? Open a
+[rule request](https://github.com/amirizalrahmat0799/culprit/issues/new?template=rule-request.yml) with the log
+lines.
 
 | Area | Rules | Covers |
 |---|---:|---|
-| Java and Spring | 29 | Spring Boot startup (port in use, missing bean, circular dependency, datasource URL), HikariCP pool exhausted, Hibernate and JPA, Flyway and Liquibase migrations, JVM out of memory and stack overflow, Jackson, class version and SSL trust errors |
+| Java and Spring | 32 | Spring Boot startup (port in use, missing bean, circular dependency, datasource URL), HikariCP pool exhausted, Hibernate and JPA (including optimistic locking), transaction timeouts, unreadable request bodies, Flyway and Liquibase migrations, JVM out of memory and stack overflow, Jackson, class version and SSL trust errors |
 | Spring between services | 16 | OpenFeign, RestTemplate/RestClient and WebClient failures, Resilience4j circuit breaker and bulkhead, service discovery and Eureka, Spring Cloud Config, Spring Security access denied, expired or badly signed JWTs, upload limits, full thread pools, failed health checks |
-| PostgreSQL, MySQL, SQLite | 20 | Too many connections, missing table, column or database, login and permission errors, deadlocks, lock and statement timeouts, unique violations, a full disk |
+| PostgreSQL, MySQL, SQLite | 21 | Too many connections, missing table, column or database, login and permission errors (including MySQL 8's "Public Key Retrieval is not allowed"), deadlocks, lock and statement timeouts, unique violations, a full disk |
 | Oracle | 14 | ORA- errors: unique constraint, missing table, invalid login, locked account, listener and service name, connect timeout, mutating table, deadlock, snapshot too old, max processes |
 | SQL Server | 6 | Deadlock victim, login failed (18456), timeouts, unreachable server, invalid object name, duplicate keys |
 | MongoDB | 4 | Duplicate key (E11000), server selection timeout, authentication, missing roles |
@@ -292,14 +296,20 @@ List them with `culprit rules`, or [write your own](docs/rules.md).
 | .NET | 10 | Dependency injection, scoped service in a singleton, NullReferenceException, Kestrel port in use, EF Core pending changes and concurrency, HttpClient timeouts, missing connection string or assembly, out of memory |
 | PHP and Laravel | 10 | Memory and time limits, calls on null, missing classes, PHP-FPM out of workers, database connection, APP_KEY, storage permissions, missing controllers, CSRF |
 | Ruby on Rails | 7 | Pending migrations, connection pool timeouts, missing database, secret_key_base, undefined method for nil, authenticity token, record not found |
-| Node | 11 | Port in use, connection refused and reset, DNS, timeouts, unhandled rejections, missing modules, heap out of memory, undefined properties, too many open files |
-| Python | 9 | Missing modules and imports, None attributes, KeyError, recursion, ASGI app not found, port in use, Django missing tables, SQLAlchemy operational errors |
+| Node | 15 | Port in use, connection refused and reset, DNS, timeouts, unhandled rejections, missing modules, heap out of memory, undefined properties, too many open files, Prisma (unreachable database, unique constraints, missing records), Sequelize and TypeORM connections |
+| Python | 13 | Missing modules and imports, None attributes, KeyError, recursion, ASGI app not found, port in use, Django missing tables and disallowed hosts, SQLAlchemy operational errors, gunicorn worker timeouts, Celery broker and time limits |
 | Go | 6 | Nil pointer, deadlock, concurrent map writes, index out of range, context deadline exceeded, DNS |
 | Containers and Kubernetes | 11 | OOMKilled, exit codes, CrashLoopBackOff, image pull errors, failed probes, eviction, missing ConfigMaps and Secrets, unschedulable pods, unbound volumes, mount failures, RBAC forbidden |
 | Docker, systemd, cron | 7 | `exec format error` (an image for another CPU), ports already allocated, the Docker daemon, unhealthy Compose dependencies, failed services and restart limits, failed cron jobs |
-| Network, TLS, the machine | 11 | Connection refused, timeouts, DNS, address in use, untrusted or expired certificates, permission denied, a full disk, too many open files, the OOM killer, clocks out of sync |
-| nginx and HTTP | 7 | Upstream refused, timed out or closed early, no live upstreams, body too large, 502s and 5xx responses |
+| gRPC | 3 | Unavailable, deadline exceeded, method not implemented |
+| Cloud credentials and limits | 6 | AWS (no credentials, expired token, access denied, throttling), Google Cloud and Azure credentials not found |
+| Network, TLS, the machine | 13 | Connection refused, timeouts, DNS, address in use, untrusted or expired certificates, TLS handshake and version failures, certificates for another hostname, permission denied, a full disk, too many open files, the OOM killer, clocks out of sync |
+| Proxies and HTTP | 11 | nginx (upstream refused, timed out or closed early, no live upstreams, body too large, response headers too big, out of worker connections), Envoy and Istio with no healthy upstream, HAProxy with no server available, 502s and 5xx responses |
+| Email | 2 | SMTP login refused, mail server unreachable |
+| Payments | 5 | Stripe: declined cards, webhook signatures that don't verify, reused idempotency keys, rate limits, invalid API keys |
+| Terraform, Helm, Ansible | 3 | Terraform state locked, a Helm release stuck in another operation, Ansible hosts unreachable |
 | Builds and CI | 19 | Maven and Gradle dependencies, compile errors and test failures, JDK too old, npm ERESOLVE, lock file out of sync and missing packages, TypeScript errors, pip, Go modules and compile errors, Docker build steps and missing files, GitHub Actions failures and timeouts |
+| Harmless lines | 3 | Clients that hung up (`Broken pipe`, `ClientAbortException`), missing favicons and other static files, telemetry that couldn't be exported. Labelled harmless: listed last, never the root cause, and not counted as errors |
 
 ### AI providers (optional)
 
@@ -504,8 +514,9 @@ culprit was built in five steps:
    service, or your own API key) reads your project, read-only, and explains the root cause with evidence
    that culprit checks against your files.
 4. **The web viewer** (0.4): all of it in a browser tab, live, on your own computer.
-5. **More rules** (0.5, this release): over 200, adding messaging and caches, calls between services,
-   more databases, .NET, PHP, Rails, deployment and build logs.
+5. **More rules** (0.5, this release): over 250, adding messaging and caches, calls between services, gRPC,
+   more databases, cloud credentials, payments, .NET, PHP, Rails, deployment and build logs, and labels for the
+   harmless lines that look like errors.
 
 ## License
 

@@ -1,0 +1,39 @@
+name: Rule request
+description: A log line culprit should recognise and explain
+title: "Rule request: "
+labels: ["rules"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! A real log line is what a rule is built from. Before pasting, **remove anything private**:
+        hostnames, IP addresses, user names, tokens, customer data.
+  - type: textarea
+    id: log
+    attributes:
+      label: The log lines
+      description: The error as it appears in the log, with its stack trace if it has one. A few lines before it help too.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: software
+    attributes:
+      label: What wrote it
+      description: The library, framework or tool, and its version.
+      placeholder: "Spring Boot 3.5 with Lettuce 6.6, Laravel 12, nginx 1.27 ..."
+    validations:
+      required: true
+  - type: textarea
+    id: meaning
+    attributes:
+      label: What it meant, and what fixed it
+      description: If you found the cause, say what it was and what you did. That's what the rule will tell the next person.
+  - type: dropdown
+    id: noise
+    attributes:
+      label: Is it a real problem?
+      options:
+        - "Yes: something was broken"
+        - "No: it's harmless and culprit should label it as such"
+        - "Not sure"

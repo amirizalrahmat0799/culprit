@@ -189,3 +189,48 @@ fix = [
   "dmesg -T | grep -i -A5 'killed process' shows which process and how much memory it used.",
   "Reduce the app's memory use or give the machine or container more.",
 ]
+
+[[rule]]
+id = "tls.handshake-failed"
+title = "TLS handshake failed: the two sides can't agree"
+examples = [
+  "javax.net.ssl.SSLHandshakeException: Received fatal alert: handshake_failure",
+  "javax.net.ssl.SSLHandshakeException: No appropriate protocol (protocol is disabled or cipher suites are inappropriate)",
+  "Error: write EPROTO 40E8C2F1:error:0A00010B:SSL routines:ssl3_get_record:wrong version number",
+]
+severity = "error"
+priority = 12
+tags = ["tls", "network"]
+contains = ["received fatal alert: handshake_failure", "received fatal alert: protocol_version", "no appropriate protocol", "wrong version number", "tlsv1 alert protocol version", "sslv3 alert handshake failure"]
+explain = """
+The client and server couldn't agree on a TLS version or cipher. Common causes: an old server that only \
+speaks TLS 1.0/1.1 (modern clients refuse them), a client with an old TLS setup, or a client speaking TLS to \
+a port that serves plain HTTP ("wrong version number")."""
+fix = [
+  "For 'wrong version number', check the URL: https:// against a plain-HTTP port (or the reverse).",
+  "See what the server offers: openssl s_client -connect <host>:443 -tls1_2 (and -tls1_3).",
+  "Upgrade the side that only speaks old TLS; re-enabling TLS 1.0/1.1 in the client should be a last resort.",
+]
+
+[[rule]]
+id = "tls.hostname-mismatch"
+title = "The certificate is for another name"
+examples = [
+  "java.security.cert.CertificateException: No subject alternative names matching IP address 10.0.1.12 found",
+  "Error [ERR_TLS_CERT_ALTNAME_INVALID]: Hostname/IP does not match certificate's altnames: Host: payments.internal. is not in the cert's altnames: DNS:payments.example.com",
+  "tls: failed to verify certificate: x509: certificate is valid for payments.example.com, not payments.internal",
+  "ssl.SSLCertVerificationError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: Hostname mismatch, certificate is not valid for 'payments.internal'. (_ssl.c:1006)",
+]
+severity = "error"
+priority = 12
+tags = ["tls", "network"]
+contains = ["no subject alternative names matching", "no subject alternative dns name matching", "does not match certificate's altnames", "x509: certificate is valid for", "hostname mismatch, certificate is not valid", "no name matching"]
+regex = "([Nn]o subject alternative|does not match certificate's altnames|x509: certificate is valid for .+, not |Hostname mismatch, certificate is not valid|No name matching \\S+ found)"
+explain = """
+The server's certificate is valid, but not for the name (or IP address) the client used to connect. Usually \
+the client connects by IP or an internal name while the certificate names the public domain."""
+fix = [
+  "Connect with a name the certificate lists (see them: openssl s_client -connect <host>:443 | openssl x509 -noout -ext subjectAltName).",
+  "Or issue the certificate with the internal name (or IP) in its subject alternative names.",
+  "Don't turn off hostname verification; it's what stops someone else's certificate from being accepted.",
+]

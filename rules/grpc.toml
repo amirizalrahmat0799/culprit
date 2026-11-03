@@ -1,0 +1,66 @@
+# gRPC: status errors from the Java, Go, Node and Python clients.
+
+[[rule]]
+id = "grpc.unavailable"
+title = "gRPC service unavailable"
+examples = [
+  'io.grpc.StatusRuntimeException: UNAVAILABLE: io exception',
+  'rpc error: code = Unavailable desc = connection error: desc = "transport: Error while dialing: dial tcp 127.0.0.1:50051: connect: connection refused"',
+  'Error: 14 UNAVAILABLE: No connection established. Last error: connect ECONNREFUSED 127.0.0.1:50051',
+]
+severity = "error"
+symptom = true
+priority = 15
+tags = ["grpc", "connections"]
+contains = ["unavailable: io exception", "code = unavailable", "14 unavailable", "statuscode.unavailable"]
+explain = """
+The gRPC client couldn't reach the server, or the connection broke: the service is down or restarting, the \
+address is wrong, or something in between (a proxy or load balancer) doesn't speak HTTP/2."""
+fix = [
+  "Check the server is up and listening on that address and port.",
+  "Behind a load balancer or ingress, check it's configured for gRPC (HTTP/2), not plain HTTP/1.1.",
+  "If it happens during deploys, retry UNAVAILABLE calls with a backoff; it's the status meant for retrying.",
+]
+
+[[rule]]
+id = "grpc.deadline-exceeded"
+title = "gRPC call ran past its deadline"
+examples = [
+  'io.grpc.StatusRuntimeException: DEADLINE_EXCEEDED: deadline exceeded after 4.999858200s. [closed=[], open=[[buffered_nanos=200000, remote_addr=inventory/10.0.1.7:50051]]]',
+  'rpc error: code = DeadlineExceeded desc = context deadline exceeded',
+]
+severity = "error"
+symptom = true
+priority = 15
+tags = ["grpc", "performance"]
+contains = ["deadline_exceeded", "code = deadlineexceeded", "4 deadline_exceeded"]
+explain = """
+The call didn't finish within the deadline the client set. The server is slow or overloaded, or the deadline \
+is shorter than this call needs. Deadlines propagate, so a short deadline upstream can expire here."""
+fix = [
+  "Check the server's latency for this method at the time.",
+  "Check where the deadline comes from; an incoming request's deadline carries over to the calls it makes.",
+  "Set deadlines per method to what each one really needs.",
+]
+
+[[rule]]
+id = "grpc.unimplemented"
+title = "gRPC method not implemented: {method}"
+examples = [
+  'io.grpc.StatusRuntimeException: UNIMPLEMENTED: Method not found: inventory.InventoryService/Reserve',
+  'rpc error: code = Unimplemented desc = unknown method Reserve for service inventory.InventoryService',
+]
+severity = "error"
+priority = 15
+tags = ["grpc", "deploy"]
+contains = ["unimplemented: method not found", "code = unimplemented"]
+regex = '(?:Method not found: |unknown method )(\S+)'
+captures = ["method"]
+explain = """
+The server doesn't have the method the client called. Usually the client was built from a newer .proto than \
+the server that's running (deployed in the wrong order), or the package or service name differs."""
+fix = [
+  "Deploy the server with the new method before the clients that call it.",
+  "Check both sides use the same .proto package and service name.",
+  "List what the server offers, if reflection is on: grpcurl <host:port> list",
+]

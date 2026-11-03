@@ -600,3 +600,65 @@ fix = [
   "Or give the app its own trust store: -Djavax.net.ssl.trustStore=... (Spring Boot: spring.ssl.bundle).",
   "Don't disable certificate checks to make it go away.",
 ]
+
+[[rule]]
+id = "jpa.optimistic-lock"
+title = "Someone else changed {entity} first (optimistic locking)"
+examples = [
+  "org.springframework.orm.ObjectOptimisticLockingFailureException: Row was updated or deleted by another transaction (or unsaved-value mapping was incorrect) : [com.example.kedai.order.Order#42]",
+  "org.hibernate.StaleObjectStateException: Row was updated or deleted by another transaction (or unsaved-value mapping was incorrect) : [com.example.kedai.order.Order#42]",
+]
+severity = "warning"
+priority = 15
+tags = ["java", "jpa", "hibernate", "concurrency"]
+contains = ["row was updated or deleted by another transaction", "optimisticlockexception", "objectoptimisticlockingfailureexception"]
+regex = '\[([\w.$]+#[^\]]+)\]'
+captures = ["entity"]
+explain = """
+Two requests loaded {entity} and both tried to save it. The entity has a @Version column, so the second save \
+was refused instead of silently overwriting the first. That's optimistic locking doing its job; the question \
+is what this request should do now."""
+fix = [
+  "For a user editing a form, tell them the data changed and show the new version (answer 409).",
+  "For automatic updates (counters, statuses), reload and retry, e.g. with @Retryable on the service method.",
+  "If it happens without any concurrent edits, check the entity isn't saved twice in one flow, or detached with a stale version.",
+]
+
+[[rule]]
+id = "spring.unreadable-request-body"
+title = "A client sent a request body that can't be read"
+examples = [
+  "2026-11-04T10:00:00.120+08:00  WARN 1 --- [kedai] [nio-8080-exec-1] .w.s.m.s.DefaultHandlerExceptionResolver : Resolved [org.springframework.http.converter.HttpMessageNotReadableException: JSON parse error: Unexpected character ('}' (code 125)): was expecting double-quote to start field name]",
+  "org.springframework.http.converter.HttpMessageNotReadableException: Required request body is missing: public org.springframework.http.ResponseEntity<?> com.example.kedai.order.OrderController.create(com.example.kedai.order.OrderRequest)",
+]
+severity = "warning"
+priority = 8
+tags = ["java", "spring", "http"]
+contains = ["httpmessagenotreadableexception"]
+explain = """
+A request's body wasn't valid JSON (or was missing, or didn't fit the target type), so Spring answered 400 \
+before the controller ran. Usually a client bug: a trailing comma, a string where a number belongs, a missing \
+Content-Type, or an empty body."""
+fix = [
+  "The text after the exception says what was wrong and where (the line and column in the JSON).",
+  "If one client sends it, fix that client; if it's every request, check the request DTO matches the JSON clients send.",
+]
+
+[[rule]]
+id = "spring.transaction-timeout"
+title = "A transaction ran past its timeout"
+examples = [
+  "org.springframework.transaction.TransactionTimedOutException: Transaction timed out: deadline was Tue Nov 04 10:00:30 MYT 2026",
+]
+severity = "error"
+priority = 15
+tags = ["java", "spring", "transactions"]
+contains = ["transactiontimedoutexception"]
+explain = """
+A @Transactional method has a timeout, and the work inside it took longer: a slow query, waiting for a lock, \
+or a call to another service made inside the transaction. The transaction was rolled back."""
+fix = [
+  "Look for slow queries or lock waits at the same time in the database.",
+  "Don't call other services or do slow work inside a transaction; do it before or after.",
+  "Raise the timeout (@Transactional(timeout = ...)) only if the work is slow on purpose.",
+]

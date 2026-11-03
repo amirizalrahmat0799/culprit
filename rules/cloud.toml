@@ -1,0 +1,126 @@
+# Cloud credentials and limits: AWS SDKs, Google Cloud client libraries, Azure Identity.
+
+[[rule]]
+id = "aws.no-credentials"
+title = "AWS SDK found no credentials"
+examples = [
+  'software.amazon.awssdk.core.exception.SdkClientException: Unable to load credentials from any of the providers in the chain AwsCredentialsProviderChain(credentialsProviders=[SystemPropertyCredentialsProvider(), EnvironmentVariableCredentialsProvider(), WebIdentityTokenCredentialsProvider(), ProfileCredentialsProvider(), ContainerCredentialsProvider(), InstanceProfileCredentialsProvider()])',
+  'botocore.exceptions.NoCredentialsError: Unable to locate credentials',
+  'CredentialsProviderError: Could not load credentials from any providers',
+]
+severity = "critical"
+priority = 15
+tags = ["aws", "cloud", "auth"]
+contains = ["unable to load credentials from any of the providers", "unable to load aws credentials", "nocredentialserror", "unable to locate credentials", "could not load credentials from any providers"]
+explain = """
+The AWS SDK looked everywhere it knows (environment variables, the profile file, web identity, the container \
+or instance role) and found no credentials. Locally that's usually a missing profile or expired SSO login; in \
+AWS it's a missing role on the task, pod or instance."""
+fix = [
+  "Locally: aws sts get-caller-identity tells you what the SDK would use; run aws sso login, or set AWS_PROFILE.",
+  "On ECS, EKS or EC2: give the task, the pod's service account (IRSA / Pod Identity) or the instance an IAM role.",
+  "In CI: configure credentials for the job (e.g. aws-actions/configure-aws-credentials with OIDC).",
+]
+
+[[rule]]
+id = "aws.expired-token"
+title = "AWS credentials have expired"
+examples = [
+  'software.amazon.awssdk.services.s3.model.S3Exception: The provided token has expired. (Service: S3, Status Code: 400, Request ID: 7Q2B9X)',
+  'botocore.exceptions.ClientError: An error occurred (ExpiredToken) when calling the GetObject operation: The security token included in the request is expired',
+]
+severity = "error"
+priority = 15
+tags = ["aws", "cloud", "auth"]
+contains = ["expiredtoken", "the security token included in the request is expired", "the provided token has expired"]
+explain = """
+The temporary credentials the app used expired. Locally, an SSO or assume-role session ran out; in a \
+long-running process, credentials were read once and never refreshed."""
+fix = [
+  "Locally: log in again (aws sso login).",
+  "In the app, use the SDK's default credentials provider, which refreshes on its own, instead of copying keys into variables once.",
+]
+
+[[rule]]
+id = "aws.access-denied"
+title = "AWS denied {action}"
+examples = [
+  'software.amazon.awssdk.services.dynamodb.model.DynamoDbException: User: arn:aws:sts::123456789012:assumed-role/shop-api/i-0abc is not authorized to perform: dynamodb:PutItem on resource: arn:aws:dynamodb:ap-southeast-1:123456789012:table/orders because no identity-based policy allows the dynamodb:PutItem action (Service: DynamoDb, Status Code: 400)',
+  'botocore.exceptions.ClientError: An error occurred (AccessDeniedException) when calling the PutItem operation: User: arn:aws:sts::123456789012:assumed-role/shop-api/i-0abc is not authorized to perform: dynamodb:PutItem on resource: arn:aws:dynamodb:ap-southeast-1:123456789012:table/orders',
+]
+severity = "error"
+priority = 15
+tags = ["aws", "cloud", "permissions"]
+contains = ["is not authorized to perform:"]
+regex = 'User: (\S+) is not authorized to perform: (\S+)'
+captures = ["principal", "action"]
+explain = """
+The credentials belong to {principal}, and no policy lets it do {action} on that resource (or a policy \
+explicitly denies it). The end of the message often says which kind of policy is missing."""
+fix = [
+  "Add {action} for that resource to the role's policy.",
+  "Check the app runs as the role you think: aws sts get-caller-identity.",
+  "If the policy looks right, check for an explicit deny: an SCP, a permissions boundary, or the resource's own policy (a bucket or KMS key policy).",
+]
+
+[[rule]]
+id = "aws.throttled"
+title = "AWS throttled the requests"
+examples = [
+  'software.amazon.awssdk.services.dynamodb.model.ProvisionedThroughputExceededException: The level of configured provisioned throughput for the table was exceeded. Consider increasing your provisioning level with the UpdateTable API.',
+  'botocore.exceptions.ClientError: An error occurred (ThrottlingException) when calling the PutMetricData operation (reached max retries: 4): Rate exceeded',
+]
+severity = "warning"
+priority = 15
+tags = ["aws", "cloud", "limits"]
+contains = ["throttlingexception", "provisionedthroughputexceededexception", "requestlimitexceeded", "toomanyrequestsexception", "please reduce your request rate"]
+explain = """
+The app called an AWS API faster than its limit allows (or than a DynamoDB table's capacity), and requests \
+were refused after the SDK's retries ran out."""
+fix = [
+  "Spread the calls out: batch them, cache results, or add jitter to scheduled jobs that all start together.",
+  "For DynamoDB, switch the table to on-demand capacity, or raise its provisioned capacity.",
+  "Ask for a higher service quota if the rate is legitimate (Service Quotas console).",
+]
+
+[[rule]]
+id = "gcp.no-credentials"
+title = "Google Cloud client found no credentials"
+examples = [
+  'google.auth.exceptions.DefaultCredentialsError: Your default credentials were not found. To set up Application Default Credentials, see https://cloud.google.com/docs/authentication/external/set-up-adc for more information.',
+  'Error: Could not load the default credentials. Browse to https://cloud.google.com/docs/authentication/getting-started for more information.',
+  'java.io.IOException: The Application Default Credentials are not available. They are available if running in Google Compute Engine. Otherwise, the environment variable GOOGLE_APPLICATION_CREDENTIALS must be defined pointing to a file defining the credentials.',
+]
+severity = "critical"
+priority = 15
+tags = ["gcp", "cloud", "auth"]
+contains = ["default credentials were not found", "could not load the default credentials", "application default credentials are not available", "defaultcredentialserror"]
+explain = """
+The Google Cloud client looked for Application Default Credentials and found none: no gcloud login locally, \
+no GOOGLE_APPLICATION_CREDENTIALS file, and no service account attached where it runs."""
+fix = [
+  "Locally: gcloud auth application-default login",
+  "On GKE: Workload Identity for the pod's service account; on Cloud Run or GCE: attach a service account.",
+  "Avoid key files where you can; if you must, point GOOGLE_APPLICATION_CREDENTIALS at one from a secret.",
+]
+
+[[rule]]
+id = "azure.no-credentials"
+title = "Azure Identity couldn't get a token"
+examples = [
+  'com.azure.identity.CredentialUnavailableException: EnvironmentCredential authentication unavailable. Environment variables are not fully configured.',
+  'azure.identity._exceptions.CredentialUnavailableError: DefaultAzureCredential failed to retrieve a token from the included credentials.',
+]
+severity = "critical"
+priority = 15
+tags = ["azure", "cloud", "auth"]
+contains = ["defaultazurecredential failed to retrieve a token", "credentialunavailableexception", "credentialunavailableerror"]
+explain = """
+DefaultAzureCredential tried each way it knows (environment variables, workload identity, managed identity, \
+the Azure CLI login) and none worked. Locally that's usually no az login; in Azure, no managed identity on \
+the app or no role assignment for it."""
+fix = [
+  "Locally: az login, and check the subscription and tenant (az account show).",
+  "In Azure: turn on the app's managed identity and give it a role on the resource (e.g. Storage Blob Data Reader).",
+  "The full message lists why each credential failed; read it from the top.",
+]
