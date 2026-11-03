@@ -1,0 +1,374 @@
+# Frontend frameworks and bundlers: React, Next.js, Vue and Nuxt, Angular, Vite, webpack. These show up in
+# server-rendering logs, dev servers, builds and test runs.
+
+# ---- React ----------------------------------------------------------------------------------------------
+
+[[rule]]
+id = "react.hydration-mismatch"
+title = "Server and browser rendered different HTML (hydration mismatch)"
+examples = [
+  "Error: Hydration failed because the server rendered HTML didn't match the client. As a result this tree will be regenerated on the client.",
+  "Warning: Text content did not match. Server: \"10:00:00\" Client: \"10:00:01\"",
+  "[Vue warn]: Hydration node mismatch:",
+]
+severity = "error"
+priority = 15
+tags = ["react", "vue", "nextjs", "nuxt", "ssr", "frontend"]
+contains = ["hydration failed", "did not match. server:", "hydration node mismatch", "hydration text content mismatch", "hydration completed but contains mismatches"]
+level = "any"
+explain = """
+The page rendered on the server differs from what the browser rendered from the same code, so the framework \
+threw away the server's HTML and rendered again (slower, and it can flicker). The usual causes are values \
+that differ between server and browser: the time, random numbers, window or localStorage, the user's locale \
+or time zone; and invalid HTML nesting, like a <div> inside a <p>."""
+fix = [
+  "Look for Date.now(), new Date(), Math.random(), window, localStorage or toLocaleString() in what the component renders.",
+  "Render browser-only values after mounting (in useEffect / onMounted), or mark that part client-only.",
+  "Check the HTML nesting the message points at (no <div> or <p> inside <p>, no <a> inside <a>).",
+  "Browser extensions that change the page can also cause it; check in a private window.",
+]
+
+[[rule]]
+id = "react.invalid-hook-call"
+title = "React: invalid hook call"
+examples = [
+  "Error: Invalid hook call. Hooks can only be called inside of the body of a function component. This could happen for one of the following reasons:",
+]
+severity = "error"
+priority = 15
+tags = ["react", "frontend"]
+contains = ["invalid hook call"]
+level = "any"
+explain = """
+A hook (useState, useEffect, ...) was called somewhere React doesn't allow: outside a component's body, in a \
+class component, inside a condition or loop, or with two copies of React in the bundle (often a library that \
+brings its own)."""
+fix = [
+  "Call hooks only at the top level of function components and custom hooks.",
+  "Check for two copies of React: npm ls react (they must all be one version, deduped).",
+  "For a linked local library (npm link), make it use the app's React (peerDependencies, and an alias in the bundler).",
+]
+
+[[rule]]
+id = "react.update-loop"
+title = "React: maximum update depth exceeded"
+examples = [
+  "Error: Maximum update depth exceeded. This can happen when a component repeatedly calls setState inside componentWillUpdate or componentDidUpdate. React limits the number of nested updates to prevent infinite loops.",
+  "Error: Too many re-renders. React limits the number of renders to prevent an infinite loop.",
+]
+severity = "error"
+priority = 15
+tags = ["react", "frontend"]
+contains = ["maximum update depth exceeded", "too many re-renders"]
+level = "any"
+explain = """
+A component keeps updating its state in reaction to its own render, so React stopped it. Usually setState \
+called during render (a handler called with () in onClick instead of passed as a function), or a useEffect that \
+sets state its own dependencies depend on."""
+fix = [
+  "Look for event handlers called instead of passed: onClick should get handle, not handle().",
+  "Check useEffect hooks that set state: a new object or array in the dependency list changes every render.",
+]
+
+[[rule]]
+id = "react.invalid-child"
+title = "React: an object was rendered as a child"
+examples = [
+  "Error: Objects are not valid as a React child (found: object with keys {id, name}). If you meant to render a collection of children, use an array instead.",
+]
+severity = "error"
+priority = 15
+tags = ["react", "frontend"]
+contains = ["objects are not valid as a react child"]
+level = "any"
+explain = """
+JSX tried to render a plain object (or a Promise, or a Date) as text. Usually an API response rendered \
+whole (the user object instead of its name), or an async component used where it isn't supported."""
+fix = [
+  "Render a field of the object, or map an array to elements.",
+  "Format dates and numbers to strings before rendering them.",
+]
+
+# ---- Next.js --------------------------------------------------------------------------------------------
+
+[[rule]]
+id = "nextjs.client-hook-in-server-component"
+title = "Next.js: a client-only feature is used in a Server Component"
+examples = [
+  "You're importing a component that needs useState. This React hook only works in a client component. To fix, mark the file (or its parent) with the \"use client\" directive.",
+  "Error: createContext only works in Client Components. Add the \"use client\" directive at the top of the file to use it.",
+]
+severity = "error"
+priority = 16
+tags = ["nextjs", "react", "frontend"]
+contains = ["only works in a client component", "only works in client components", "only works in a client component."]
+level = "any"
+explain = """
+With the App Router, components are Server Components unless marked otherwise, and they can't use state, \
+effects, context or browser APIs. This component (or a library it imports) needs them."""
+fix = [
+  "Add \"use client\" at the top of the file that uses the hook, as deep in the tree as possible.",
+  "For a library that lacks it, wrap it in your own small file that starts with \"use client\".",
+]
+
+[[rule]]
+id = "nextjs.image-host"
+title = "Next.js: image host {host} isn't allowed"
+examples = [
+  "Error: Invalid src prop (https://cdn.example.com/p/42.jpg) on `next/image`, hostname \"cdn.example.com\" is not configured under images in your `next.config.js`",
+]
+severity = "error"
+priority = 16
+tags = ["nextjs", "frontend", "config"]
+contains = ["is not configured under images in your"]
+regex = 'hostname "([^"]+)" is not configured'
+captures = ["host"]
+explain = """
+next/image only optimises images from hosts listed in the config, and {host} isn't one of them."""
+fix = [
+  "Add it to images.remotePatterns in next.config.js: protocol 'https', hostname '{host}'.",
+  "Restart the dev server after changing next.config.js.",
+]
+
+[[rule]]
+id = "nextjs.dynamic-server-usage"
+title = "Next.js: a page meant to be static uses request data"
+examples = [
+  "Error: Dynamic server usage: Route /orders couldn't be rendered statically because it used `cookies`. See more info here: https://nextjs.org/docs/messages/dynamic-server-error",
+]
+severity = "error"
+priority = 16
+tags = ["nextjs", "frontend", "build"]
+contains = ["dynamic server usage"]
+level = "any"
+explain = """
+Next.js tried to render a route at build time, and the route reads something that only exists per request \
+(cookies, headers, searchParams, an uncached fetch). It can't be both static and request-dependent."""
+fix = [
+  "If the page depends on the request, make it dynamic: export const dynamic = 'force-dynamic' in the route.",
+  "If it should be static, move the request-dependent part into a client component or a separate route.",
+]
+
+[[rule]]
+id = "nextjs.prerender-failed"
+title = "Next.js build failed while prerendering {page}"
+examples = [
+  "Error occurred prerendering page \"/orders\". Read more: https://nextjs.org/docs/messages/prerender-error",
+]
+severity = "error"
+symptom = true
+priority = 12
+tags = ["nextjs", "frontend", "build"]
+contains = ["error occurred prerendering page"]
+level = "any"
+regex = 'prerendering page "([^"]+)"'
+captures = ["page"]
+explain = """
+The build renders static pages, and rendering {page} threw. The error just above this line is the cause; \
+often a fetch to an API that isn't reachable from the build machine, or an environment variable that isn't \
+set at build time."""
+fix = [
+  "Read the error above this message.",
+  "Data fetched at build time must be reachable from the CI machine, with its environment variables set there.",
+  "If the page needs live data, make it dynamic instead of prerendering it.",
+]
+
+# ---- Nuxt and Vue -----------------------------------------------------------------------------------------
+
+[[rule]]
+id = "vue.unresolved-component"
+title = "Vue can't find component {component}"
+examples = [
+  "[Vue warn]: Failed to resolve component: OrderCard\nIf this is a native custom element, make sure to exclude it from component resolution via compilerOptions.isCustomElement.",
+]
+severity = "warning"
+priority = 15
+tags = ["vue", "nuxt", "frontend"]
+contains = ["failed to resolve component"]
+level = "any"
+regex = 'Failed to resolve component: (\S+)'
+captures = ["component"]
+explain = """
+A template uses <{component}>, and Vue doesn't know it: it isn't imported or registered, its name is spelled \
+differently, or (in Nuxt) the file isn't where auto-import looks."""
+fix = [
+  "Import it in the component that uses it, or register it globally.",
+  "In Nuxt, put it under components/; nested folders become part of the name (components/order/Card.vue is <OrderCard>).",
+]
+
+[[rule]]
+id = "nuxt.request-error"
+title = "Nuxt server error ({status})"
+examples = [
+  "[nuxt] [request error] [unhandled] [500] Cannot read properties of undefined (reading 'items')\n  at ./server/api/orders.get.ts:12:21",
+]
+severity = "error"
+priority = 8
+tags = ["nuxt", "vue", "frontend"]
+contains = ["[nuxt] [request error]"]
+level = "any"
+regex = '\[request error\] \[\w+\] \[(\d{3})\]'
+captures = ["status"]
+explain = """
+A request to the Nuxt server failed with status {status}, and the error wasn't handled. The message and the \
+stack trace under it say where."""
+fix = [
+  "Open the file and line in the stack trace (server/api/... for API routes).",
+  "Throw createError({ statusCode, statusMessage }) for expected failures, so they get a proper status instead of a 500.",
+]
+
+# ---- Angular ---------------------------------------------------------------------------------------------
+
+[[rule]]
+id = "angular.no-provider"
+title = "Angular: no provider for {token}"
+examples = [
+  "NullInjectorError: R3InjectorError(Standalone[AppComponent])[OrderService -> HttpClient -> HttpClient]: \n  NullInjectorError: No provider for HttpClient!",
+]
+severity = "error"
+priority = 15
+tags = ["angular", "frontend"]
+contains = ["nullinjectorerror", "no provider for"]
+level = "any"
+regex = 'No provider for (\w+)'
+captures = ["token"]
+explain = """
+Something asks for {token} through dependency injection, and nothing provides it where it's asked for. For \
+HttpClient, that means provideHttpClient() (or HttpClientModule) is missing."""
+fix = [
+  "Provide it: in app.config.ts providers (provideHttpClient(), provideRouter(...)), or in the module or component that needs it.",
+  "For your own service, use @Injectable({ providedIn: 'root' }).",
+]
+
+[[rule]]
+id = "angular.budget-exceeded"
+title = "Angular bundle is over its size budget"
+examples = [
+  "Error: bundle initial exceeded maximum budget. Budget 1.00 MB was not met by 245.31 kB with a total of 1.24 MB.",
+  "Warning: bundle initial exceeded maximum budget. Budget 500.00 kB was not met by 120.00 kB with a total of 620.00 kB.",
+]
+severity = "warning"
+priority = 15
+tags = ["angular", "frontend", "build"]
+contains = ["exceeded maximum budget"]
+level = "any"
+explain = """
+The built bundle is bigger than the budget in angular.json. A warning lets the build pass; an error fails it. \
+Usually a large library pulled into the initial bundle (a whole icon set, moment with all locales, a chart \
+library on the first page)."""
+fix = [
+  "See what's in it: ng build --stats-json, then npx esbuild-visualizer (or source-map-explorer).",
+  "Lazy-load routes and heavy components (loadComponent / loadChildren, @defer).",
+  "Raise the budget in angular.json only if the size is intended.",
+]
+
+# ---- Vite and webpack -----------------------------------------------------------------------------------------
+
+[[rule]]
+id = "vite.unresolved-import"
+title = "Vite can't resolve import {module}"
+examples = [
+  "[vite] Internal server error: Failed to resolve import \"./OrderCard\" from \"src/pages/Orders.tsx\". Does the file exist?",
+  "[vite]: Rollup failed to resolve import \"chart.js/auto\" from \"/app/src/Chart.tsx\".",
+]
+severity = "error"
+priority = 15
+tags = ["vite", "frontend", "build"]
+contains = ["failed to resolve import"]
+level = "any"
+regex = 'resolve import "([^"]+)"'
+captures = ["module"]
+explain = """
+The import {module} doesn't point at a file or an installed package. A typo, a file name whose case differs \
+(it works on Windows and macOS but fails on Linux and in CI), a missing npm install, or a path alias that \
+Vite doesn't know (it reads aliases from vite.config, not tsconfig)."""
+fix = [
+  "Check the path and the file name's exact case.",
+  "For a package, check it's in package.json and installed.",
+  "For an alias like @/..., add it to resolve.alias in vite.config (or use vite-tsconfig-paths).",
+]
+
+[[rule]]
+id = "esm.missing-export"
+title = "Module {module} has no export named {name}"
+examples = [
+  "SyntaxError: The requested module '/src/api.ts' does not provide an export named 'fetchOrders'",
+  "SyntaxError: The requested module 'lodash' does not provide an export named 'debounce'",
+]
+severity = "error"
+priority = 15
+tags = ["javascript", "esm", "frontend"]
+contains = ["does not provide an export named"]
+level = "any"
+regex = "requested module '([^']+)' does not provide an export named '([^']+)'"
+captures = ["module", "name"]
+explain = """
+An import asks {module} for {name}, and it doesn't export that name. Either a typo, a default export imported \
+as named (or the reverse), or a CommonJS package (like lodash) imported with named imports in native ESM."""
+fix = [
+  "Check what {module} exports: a default export is imported without braces.",
+  "For a CommonJS package, import the default and destructure: import pkg from 'x'; const { y } = pkg; (or use its ESM build, e.g. lodash-es).",
+]
+
+[[rule]]
+id = "webpack.module-not-found"
+title = "webpack can't resolve {module}"
+examples = [
+  "Module not found: Error: Can't resolve './OrderCard' in '/app/src/pages'",
+  "Module not found: Can't resolve 'chart.js/auto'",
+]
+severity = "error"
+priority = 15
+tags = ["webpack", "nextjs", "frontend", "build"]
+contains = ["module not found: error: can't resolve", "module not found: can't resolve"]
+level = "any"
+regex = "Can't resolve '([^']+)'"
+captures = ["module"]
+explain = """
+The bundler can't find {module}. A typo, a file name whose case differs (fine on Windows and macOS, broken on \
+Linux and in CI), a package that isn't installed, or a path alias missing from the bundler's config."""
+fix = [
+  "Check the path and the exact case of the file name.",
+  "For a package, check it's in package.json and installed (npm ci).",
+  "For an alias, add it to resolve.alias (Next.js reads paths from tsconfig.json / jsconfig.json).",
+]
+
+[[rule]]
+id = "webpack.node-polyfills"
+title = "webpack 5 no longer includes Node's built-in modules for the browser"
+examples = [
+  "BREAKING CHANGE: webpack < 5 used to include polyfills for node.js core modules by default.\nThis is no longer the case. Verify if you need this module and configure a polyfill for it.\n\nIf you want to include a polyfill, you need to:\n\t- add a fallback 'resolve.fallback: { \"crypto\": require.resolve(\"crypto-browserify\") }'",
+  "Module not found: Error: Can't resolve 'crypto' in '/app/node_modules/jsonwebtoken/lib'",
+]
+severity = "error"
+priority = 16
+tags = ["webpack", "frontend", "build"]
+contains = ["used to include polyfills for node.js core modules", "can't resolve 'crypto'", "can't resolve 'stream'", "can't resolve 'buffer'", "can't resolve 'path'", "can't resolve 'fs'", "can't resolve 'os'"]
+level = "any"
+explain = """
+Code meant for Node (crypto, stream, buffer, fs ...) ended up in the browser bundle, and webpack 5 doesn't fake Node's built-in \
+modules any more. Usually a server-side library imported into frontend code, like jsonwebtoken or a database \
+client."""
+fix = [
+  "Don't bundle server libraries for the browser: use a browser one (jose instead of jsonwebtoken), or move that code to the server.",
+  "If you really need it, add a resolve.fallback polyfill for that module (e.g. crypto-browserify), or false to leave it out.",
+]
+
+[[rule]]
+id = "webpack.openssl-unsupported"
+title = "An old webpack build on a new Node (ERR_OSSL_EVP_UNSUPPORTED)"
+examples = [
+  "Error: error:0308010C:digital envelope routines::unsupported\n  opensslErrorStack: [ 'error:03000086:digital envelope routines::initialization error' ],\n  library: 'digital envelope routines',\n  reason: 'unsupported',\n  code: 'ERR_OSSL_EVP_UNSUPPORTED'",
+]
+severity = "critical"
+priority = 18
+tags = ["webpack", "node", "frontend", "build"]
+contains = ["err_ossl_evp_unsupported", "digital envelope routines::unsupported"]
+level = "any"
+explain = """
+webpack 4 (and tools built on it, like older Create React App and Vue CLI) hashes with MD4, which Node 17 and \
+later no longer allow through OpenSSL 3. The build fails at the start."""
+fix = [
+  "Best: upgrade to webpack 5 (react-scripts 5, @vue/cli 5), or move to Vite.",
+  "Short term: build on Node 16, or set NODE_OPTIONS=--openssl-legacy-provider.",
+]

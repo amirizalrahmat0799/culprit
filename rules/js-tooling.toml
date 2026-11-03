@@ -1,0 +1,187 @@
+# JavaScript tooling in CI: pnpm and yarn, Jest, Vitest, Playwright, Cypress, ESLint, and harmless warnings.
+
+# ---- package managers -------------------------------------------------------------------------------------
+
+[[rule]]
+id = "pnpm.outdated-lockfile"
+title = "pnpm-lock.yaml doesn't match package.json"
+examples = [
+  "ERR_PNPM_OUTDATED_LOCKFILE  Cannot install with \"frozen-lockfile\" because pnpm-lock.yaml is not up to date with package.json",
+]
+severity = "critical"
+priority = 16
+tags = ["pnpm", "node", "build", "ci"]
+contains = ["err_pnpm_outdated_lockfile"]
+level = "any"
+explain = """
+package.json changed without updating pnpm-lock.yaml, and CI installs with --frozen-lockfile (the default \
+there), which only installs exactly what the lock file says."""
+fix = [
+  "Run pnpm install locally and commit pnpm-lock.yaml.",
+  "Use the same pnpm major version locally and in CI (packageManager in package.json, with corepack).",
+]
+
+[[rule]]
+id = "yarn.immutable-lockfile"
+title = "yarn.lock doesn't match package.json"
+examples = [
+  "➤ YN0028: The lockfile would have been modified by this install, which is explicitly forbidden.",
+  "error Your lockfile needs to be updated, but yarn was run with `--frozen-lockfile`.",
+]
+severity = "critical"
+priority = 16
+tags = ["yarn", "node", "build", "ci"]
+contains = ["yn0028", "the lockfile would have been modified by this install", "your lockfile needs to be updated, but yarn was run with"]
+level = "any"
+explain = """
+package.json changed without updating yarn.lock, and the install in CI isn't allowed to change it \
+(--immutable in Yarn 2+, --frozen-lockfile in Yarn 1)."""
+fix = [
+  "Run yarn install locally and commit yarn.lock.",
+  "Use the same Yarn version locally and in CI (packageManager in package.json, with corepack).",
+]
+
+# ---- tests ----------------------------------------------------------------------------------------------
+
+[[rule]]
+id = "jest.timeout"
+title = "A test ran past its timeout"
+examples = [
+  "thrown: \"Exceeded timeout of 5000 ms for a test.\nAdd a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.\"",
+  "Error: Test timed out in 5000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".",
+]
+severity = "error"
+priority = 15
+tags = ["jest", "vitest", "tests", "ci"]
+contains = ["exceeded timeout of", "test timed out in"]
+level = "any"
+explain = """
+A test didn't finish within its timeout (5 seconds by default). Usually a promise that never resolves: a \
+missing await, a done callback never called, a real network call, or a fake timer that's never advanced."""
+fix = [
+  "Check the test awaits every promise, and calls done (if it uses it).",
+  "Mock network calls; with fake timers, advance them (vi.advanceTimersByTime, jest.advanceTimersByTime).",
+  "Raise the timeout only for tests that are slow on purpose.",
+]
+
+[[rule]]
+id = "playwright.browsers-missing"
+title = "Playwright's browsers aren't installed"
+examples = [
+  "Error: browserType.launch: Executable doesn't exist at /home/runner/.cache/ms-playwright/chromium_headless_shell-1155/chrome-linux/headless_shell\n╔═════════════════════════════════════════════════════════════════════════╗\n║ Looks like Playwright Test or Playwright was just installed or updated. ║\n║ Please run the following command to download new browsers:              ║\n║     npx playwright install                                              ║",
+]
+severity = "critical"
+priority = 16
+tags = ["playwright", "tests", "ci"]
+contains = ["browsertype.launch: executable doesn't exist"]
+level = "any"
+explain = """
+Playwright's browsers are downloaded separately from the npm package, and the ones this version needs aren't \
+there: the browsers were never installed on this machine, or Playwright was upgraded since."""
+fix = [
+  "Install them: npx playwright install --with-deps (in CI, as a step before the tests).",
+  "In CI, cache ~/.cache/ms-playwright keyed by the Playwright version, or use the mcr.microsoft.com/playwright image.",
+]
+
+[[rule]]
+id = "cypress.server-not-running"
+title = "Cypress can't reach the app"
+examples = [
+  "Cypress could not verify that this server is running:\n\n  > http://localhost:3000\n\nWe are verifying this server because it has been configured as your baseUrl.",
+]
+severity = "error"
+priority = 15
+tags = ["cypress", "tests", "ci"]
+contains = ["cypress could not verify that this server is running"]
+level = "any"
+explain = """
+Cypress checks the app answers at baseUrl before running, and nothing answered. In CI the app \
+usually wasn't started, or the tests started before it was ready."""
+fix = [
+  "Start the app before Cypress, and wait for it: npx start-server-and-test 'npm start' <url> 'npx cypress run'",
+  "Check baseUrl matches the port the app really listens on.",
+]
+
+# ---- lint -----------------------------------------------------------------------------------------------
+
+[[rule]]
+id = "eslint.errors"
+title = "ESLint found {errors} errors"
+examples = [
+  "✖ 12 problems (3 errors, 9 warnings)",
+]
+severity = "error"
+priority = 15
+tags = ["eslint", "lint", "ci"]
+contains = ["problems ("]
+level = "any"
+regex = '✖ \d+ problems? \(([1-9]\d*) errors?, \d+ warnings?\)'
+captures = ["errors"]
+explain = """
+ESLint reported {errors} errors, so the lint step fails. The files, lines and rules are listed above this \
+summary."""
+fix = [
+  "Many can be fixed automatically: npx eslint . --fix",
+  "Run the same lint locally before pushing (a pre-commit hook with lint-staged).",
+]
+
+# ---- harmless warnings ---------------------------------------------------------------------------------------
+
+[[rule]]
+id = "noise.browserslist-outdated"
+title = "Browserslist's browser data is outdated"
+examples = [
+  "Browserslist: browsers data (caniuse-lite) is 8 months old. Please run:\n  npx update-browserslist-db@latest",
+  "Browserslist: caniuse-lite is outdated. Please run:\n  npx update-browserslist-db@latest",
+]
+severity = "info"
+priority = 15
+tags = ["noise", "frontend", "build"]
+contains = ["browserslist: caniuse-lite is outdated", "browserslist: browsers data (caniuse-lite) is"]
+level = "any"
+explain = """
+The list of browser versions used to decide what CSS and JavaScript to transpile is a few months old. The \
+build works; it may only add a little more compatibility code than needed."""
+fix = [
+  "Update it now and then: npx update-browserslist-db@latest (it changes only the lock file).",
+]
+
+[[rule]]
+id = "noise.node-deprecation"
+title = "Node deprecation warning ({code})"
+examples = [
+  "(node:1) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)",
+  "(node:1) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues.",
+]
+severity = "info"
+priority = 15
+tags = ["noise", "node"]
+contains = ["deprecationwarning"]
+level = "any"
+regex = '\[(DEP\d+)\] DeprecationWarning'
+captures = ["code"]
+explain = """
+Node is warning that something uses an API it plans to remove ({code}). It works today. Usually it's inside \
+a dependency, not your code (punycode, for example, is used by older versions of popular packages)."""
+fix = [
+  "To find who uses it: node --trace-deprecation, then update that dependency.",
+  "Nothing urgent; handle it when you upgrade Node or the dependency.",
+]
+
+[[rule]]
+id = "noise.react-key-warning"
+title = "React: list items without a key"
+examples = [
+  "Warning: Each child in a list should have a unique \"key\" prop.\n\nCheck the render method of `OrderList`. See https://react.dev/link/warning-keys for more information.",
+]
+severity = "info"
+priority = 15
+tags = ["noise", "react", "frontend"]
+contains = ["each child in a list should have a unique \"key\" prop"]
+level = "any"
+explain = """
+A component renders a list without a key on each item. It works, but React can mix up items when the list \
+changes (inputs keeping the wrong value, needless re-renders)."""
+fix = [
+  "Give each item a stable, unique key prop, such as its id. Avoid the array index when items can be reordered.",
+]

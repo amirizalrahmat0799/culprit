@@ -1,7 +1,7 @@
 # Writing rules
 
 A rule teaches culprit to recognise one problem in a log and explain it: what it means, and what to do.
-culprit ships with over 250 (`culprit rules` lists them). You can add your own for the problems your
+culprit ships with over 290 (`culprit rules` lists them). You can add your own for the problems your
 team keeps meeting: an error from an internal library, a payment provider's decline code, a misconfiguration
 that only your setup has.
 

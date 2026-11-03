@@ -1,0 +1,208 @@
+# The JavaScript runtime and servers: ES modules vs CommonJS, server-side rendering, Express, file watchers.
+
+[[rule]]
+id = "esm.require-esm"
+title = "require() of an ES module ({module})"
+examples = [
+  "Error [ERR_REQUIRE_ESM]: require() of ES Module /app/node_modules/node-fetch/src/index.js from /app/src/client.js not supported.",
+]
+severity = "error"
+priority = 18
+tags = ["node", "javascript", "esm"]
+contains = ["err_require_esm"]
+level = "any"
+regex = 'require\(\) of ES Module (\S+)'
+captures = ["module"]
+explain = """
+CommonJS code (require) loads a package that only ships as an ES module, like node-fetch 3, chalk 5 or \
+nanoid 4. Older Node versions can't do that."""
+fix = [
+  "Use import() instead of require() for that package, or move the project to ESM (\"type\": \"module\").",
+  "Or pin the package's last CommonJS version (node-fetch@2, chalk@4).",
+  "Node 22.12 and later can require() most ES modules; upgrading Node may be enough.",
+]
+
+[[rule]]
+id = "esm.import-outside-module"
+title = "ES module syntax in a file Node treats as CommonJS"
+examples = [
+  "SyntaxError: Cannot use import statement outside a module",
+  "SyntaxError: Unexpected token 'export'",
+]
+severity = "error"
+priority = 15
+tags = ["node", "javascript", "esm"]
+contains = ["cannot use import statement outside a module", "unexpected token 'export'"]
+level = "any"
+explain = """
+A file uses import or export, and Node (or Jest) loads it as CommonJS. The package.json has no \
+"type": "module", the file isn't .mjs, or a test runner isn't set up to transform ES modules (often a \
+dependency that ships ESM only)."""
+fix = [
+  "For your own code, add \"type\": \"module\" to package.json, or name the file .mjs.",
+  "In Jest, transform that dependency (transformIgnorePatterns) or use Vitest, which handles ESM natively.",
+]
+
+[[rule]]
+id = "esm.missing-extension"
+title = "ES module import is missing its file extension"
+examples = [
+  "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/app/dist/orders/service' imported from /app/dist/index.js",
+]
+severity = "error"
+priority = 15
+tags = ["node", "javascript", "esm", "typescript"]
+contains = ["err_module_not_found"]
+level = "any"
+regex = "Cannot find module '([^']+?)' imported from"
+captures = ["module"]
+explain = """
+In ES modules, Node needs the exact file: imports must include the extension (./service.js, not ./service) \
+and can't import a folder's index implicitly. TypeScript compiled to ESM keeps the path as written, so \
+imports that work in the editor fail when Node runs the output."""
+fix = [
+  "Write relative imports with .js, even in .ts files: import { x } from './service.js'",
+  "Or set moduleResolution to NodeNext in tsconfig, so the compiler checks this for you.",
+]
+
+[[rule]]
+id = "node.ts-extension"
+title = "Node was asked to run a .ts file directly"
+examples = [
+  "TypeError [ERR_UNKNOWN_FILE_EXTENSION]: Unknown file extension \".ts\" for /app/src/index.ts",
+]
+severity = "error"
+priority = 15
+tags = ["node", "typescript"]
+contains = ["err_unknown_file_extension"]
+level = "any"
+explain = """
+Node ran a TypeScript file it can't load: ts-node in an ESM project without its loader, or a Node version \
+without built-in type stripping."""
+fix = [
+  "Use tsx to run TypeScript (npx tsx src/index.ts), or build with tsc and run the .js output.",
+  "With ts-node and ESM: node --loader ts-node/esm src/index.ts",
+  "Node 22.18 and later strip types themselves for most code.",
+]
+
+[[rule]]
+id = "ssr.browser-global"
+title = "{global} is not defined: browser code ran on the server"
+examples = [
+  "ReferenceError: window is not defined",
+  "ReferenceError: localStorage is not defined\n    at getToken (/app/.next/server/chunks/412.js:1:2088)",
+]
+severity = "error"
+priority = 15
+tags = ["javascript", "ssr", "nextjs", "nuxt", "frontend", "tests"]
+contains = ["window is not defined", "document is not defined", "localstorage is not defined", "navigator is not defined", "sessionstorage is not defined"]
+level = "any"
+regex = '(window|document|localStorage|sessionStorage|navigator) is not defined'
+captures = ["global"]
+explain = """
+Code that uses the browser's {global} ran where there's no browser: during server-side rendering (Next.js, \
+Nuxt, SvelteKit, Remix), at build time, or in tests running in Node instead of jsdom."""
+fix = [
+  "Use {global} only in effects or event handlers (useEffect, onMounted), which run only in the browser.",
+  "Or guard it: if (typeof window !== 'undefined') ...; or load the component without SSR (next/dynamic with ssr: false, <ClientOnly>).",
+  "In tests, use a browser-like environment: testEnvironment 'jsdom' (Jest) or environment: 'jsdom' (Vitest).",
+]
+
+[[rule]]
+id = "express.headers-sent"
+title = "Response sent twice (headers already sent)"
+examples = [
+  "Error [ERR_HTTP_HEADERS_SENT]: Cannot set headers after they are sent to the client",
+]
+severity = "error"
+priority = 15
+tags = ["node", "express", "http"]
+contains = ["err_http_headers_sent", "cannot set headers after they are sent"]
+level = "any"
+explain = """
+A handler answered a request and then tried to answer it again: a res.send() or res.json() without return \
+before another one, next() called after responding, or an error handler that responds after the route did."""
+fix = [
+  "Return after each response in a handler: return res.status(404).json(...)",
+  "Check async code: a callback or a catch that responds after the main path already did.",
+]
+
+[[rule]]
+id = "express.payload-too-large"
+title = "Request body larger than the limit"
+examples = [
+  "PayloadTooLargeError: request entity too large\n    at readStream (/app/node_modules/raw-body/index.js:163:17)",
+]
+severity = "warning"
+priority = 15
+tags = ["node", "express", "http"]
+contains = ["payloadtoolargeerror", "request entity too large"]
+level = "any"
+explain = """
+A request's body was bigger than the body parser allows (100 kB by default in express.json()), so it \
+answered 413."""
+fix = [
+  "If bigger bodies are expected, raise it: app.use(express.json({ limit: '1mb' }))",
+  "For files, use multipart uploads (multer, busboy) instead of JSON bodies.",
+]
+
+[[rule]]
+id = "express.cors-rejected"
+title = "CORS refused a request's origin"
+examples = [
+  "Error: Not allowed by CORS\n    at origin (/app/src/app.js:14:16)",
+]
+severity = "warning"
+priority = 15
+tags = ["node", "express", "http", "cors"]
+contains = ["not allowed by cors"]
+level = "any"
+explain = """
+The cors middleware's origin check refused a request's Origin, so the browser blocks the response. Either \
+the frontend's address (scheme, host and port must all match) isn't in the allowed list, or the request \
+came from a site that shouldn't be allowed."""
+fix = [
+  "Add the frontend's exact origin to the list (https://shop.example.com, and http://localhost:5173 for development).",
+  "Requests without an Origin (curl, server to server) arrive with origin undefined; decide whether to allow them.",
+]
+
+[[rule]]
+id = "node.file-watchers"
+title = "Out of file watchers (not out of disk space)"
+examples = [
+  "Error: ENOSPC: System limit for number of file watchers reached, watch '/app/src/pages'",
+]
+severity = "error"
+priority = 18
+tags = ["node", "linux", "frontend"]
+contains = ["system limit for number of file watchers reached"]
+level = "any"
+explain = """
+Despite the ENOSPC code, the disk isn't full: Linux limits how many files one user can watch for changes \
+(inotify), and a dev server watching a big project, node_modules included, used them all up."""
+fix = [
+  "Raise the limit: echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf && sudo sysctl -p",
+  "Stop watching node_modules and build output (the watcher's ignore option).",
+  "In Docker, the limit is the host's; change it there.",
+]
+
+[[rule]]
+id = "node.engine-mismatch"
+title = "Wrong Node version for this project"
+examples = [
+  "npm warn EBADENGINE Unsupported engine {",
+  'error vite@6.0.7: The engine "node" is incompatible with this module. Expected version "^18.0.0 || ^20.0.0 || >=22.0.0". Got "16.20.2"',
+  "ERR_PNPM_UNSUPPORTED_ENGINE  Unsupported environment (bad pnpm and/or Node.js version)",
+]
+severity = "warning"
+priority = 15
+tags = ["node", "npm", "build", "ci"]
+contains = ["ebadengine", "the engine \"node\" is incompatible", "err_pnpm_unsupported_engine"]
+level = "any"
+explain = """
+A package (or the project) requires a different Node version than the one installed. npm only warns, but \
+the package may then fail in odd ways; yarn and pnpm refuse to install."""
+fix = [
+  "Use the Node version the project expects (the engines field, or .nvmrc): nvm use, or fnm use.",
+  "In CI, set it explicitly (actions/setup-node with node-version-file: .nvmrc).",
+]

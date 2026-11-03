@@ -35,13 +35,15 @@ Press `a` in the viewer for the problems it found:
 
 ![The Problems panel: a failed migration marked as the root cause of the 502s that followed](docs/images/problems.png)
 
-- **It recognises known problems.** Over 250 rules cover:
+- **It recognises known problems.** Over 290 rules cover:
   - **Java and Spring:** Spring Boot, Hibernate, Flyway and Liquibase, HikariCP, the JVM, and calls between
     services (OpenFeign, RestTemplate, WebClient, Resilience4j, Eureka, Spring Cloud Config, Spring Security
     and JWTs).
   - **Databases:** Oracle (ORA- errors), PostgreSQL, MySQL, SQL Server, MongoDB and Elasticsearch.
   - **Messaging, caches and calls:** Kafka, RabbitMQ, Redis, gRPC, and SMTP for email.
   - **Cloud and payments:** AWS, Google Cloud and Azure credentials and limits, and Stripe.
+  - **Frontend and JavaScript:** React, Next.js, Vue and Nuxt, Angular, Vite and webpack, ES modules and
+    server rendering, Express, and their tooling (pnpm, yarn, Jest, Vitest, Playwright, Cypress, ESLint).
   - **Other languages:** .NET and Entity Framework Core, PHP and Laravel, Ruby on Rails, Node, Python and Go.
   - **Where it runs:** Docker and Compose, Kubernetes (scheduling, volumes, RBAC), systemd, cron, nginx,
     Envoy and HAProxy, Terraform, Helm and Ansible.
@@ -244,7 +246,7 @@ Logs hold secrets, and any website open in your browser can send requests to `lo
 - **Filters as you type.** Words, phrases, levels, fields and regular expressions, all at once.
 - **Lines up services.** Several files or Compose services get a source column, and timestamps from different
   time zones are all shown in your local time.
-- **Explains what went wrong.** Recognises over 250 known problems, finds the likely root cause, and groups
+- **Explains what went wrong.** Recognises over 290 known problems, finds the likely root cause, and groups
   repeated errors. See [Finding the cause](#finding-the-cause).
 - **Copes with big logs.** A million lines (118 MB) open in a couple of seconds, and filtering them while you
   type stays instant.
@@ -276,7 +278,7 @@ languages' traces stay attached to their entry as text.
 
 ### Problems it recognises
 
-257 built-in rules. Each explains the problem with the values from your log filled in, and says what to do.
+293 built-in rules. Each explains the problem with the values from your log filled in, and says what to do.
 List them with `culprit rules`, or [write your own](docs/rules.md). Is a common error missing? Open a
 [rule request](https://github.com/amirizalrahmat0799/culprit/issues/new?template=rule-request.yml) with the log
 lines.
@@ -296,6 +298,8 @@ lines.
 | .NET | 10 | Dependency injection, scoped service in a singleton, NullReferenceException, Kestrel port in use, EF Core pending changes and concurrency, HttpClient timeouts, missing connection string or assembly, out of memory |
 | PHP and Laravel | 10 | Memory and time limits, calls on null, missing classes, PHP-FPM out of workers, database connection, APP_KEY, storage permissions, missing controllers, CSRF |
 | Ruby on Rails | 7 | Pending migrations, connection pool timeouts, missing database, secret_key_base, undefined method for nil, authenticity token, record not found |
+| Frontend frameworks | 17 | React (hydration mismatches, invalid hook calls, update loops, objects rendered as children), Next.js (client-only features in Server Components, image hosts, dynamic server usage, prerendering), Vue and Nuxt, Angular (missing providers, bundle budgets), Vite and webpack (unresolved imports, missing exports, Node polyfills, OpenSSL errors on new Node) |
+| JavaScript runtime and servers | 10 | ES modules vs CommonJS (require of ES modules, import outside a module, missing file extensions), running .ts directly, browser globals during server rendering, Express (responses sent twice, bodies too large, CORS), file-watcher limits, the wrong Node version |
 | Node | 15 | Port in use, connection refused and reset, DNS, timeouts, unhandled rejections, missing modules, heap out of memory, undefined properties, too many open files, Prisma (unreachable database, unique constraints, missing records), Sequelize and TypeORM connections |
 | Python | 13 | Missing modules and imports, None attributes, KeyError, recursion, ASGI app not found, port in use, Django missing tables and disallowed hosts, SQLAlchemy operational errors, gunicorn worker timeouts, Celery broker and time limits |
 | Go | 6 | Nil pointer, deadlock, concurrent map writes, index out of range, context deadline exceeded, DNS |
@@ -308,8 +312,8 @@ lines.
 | Email | 2 | SMTP login refused, mail server unreachable |
 | Payments | 5 | Stripe: declined cards, webhook signatures that don't verify, reused idempotency keys, rate limits, invalid API keys |
 | Terraform, Helm, Ansible | 3 | Terraform state locked, a Helm release stuck in another operation, Ansible hosts unreachable |
-| Builds and CI | 19 | Maven and Gradle dependencies, compile errors and test failures, JDK too old, npm ERESOLVE, lock file out of sync and missing packages, TypeScript errors, pip, Go modules and compile errors, Docker build steps and missing files, GitHub Actions failures and timeouts |
-| Harmless lines | 3 | Clients that hung up (`Broken pipe`, `ClientAbortException`), missing favicons and other static files, telemetry that couldn't be exported. Labelled harmless: listed last, never the root cause, and not counted as errors |
+| Builds and CI | 25 | Maven and Gradle dependencies, compile errors and test failures, JDK too old, npm ERESOLVE, lock file out of sync and missing packages, TypeScript errors, pip, Go modules and compile errors, Docker build steps and missing files, GitHub Actions failures and timeouts, pnpm and yarn lock files, Jest and Vitest timeouts, Playwright browsers not installed, Cypress unable to reach the app, ESLint errors |
+| Harmless lines | 6 | Clients that hung up (`Broken pipe`, `ClientAbortException`), missing favicons and other static files, telemetry that couldn't be exported, outdated Browserslist data, Node deprecation warnings, React key warnings. Labelled harmless: listed last, never the root cause, and not counted as errors |
 
 ### AI providers (optional)
 
@@ -505,7 +509,7 @@ built-in rule is checked against its examples. CI builds and tests on Windows, L
 
 ## Roadmap
 
-culprit was built in five steps:
+culprit was built in six steps:
 
 1. **The viewer** (0.1): reading, following, filtering, and pointing at your code.
 2. **The analyser** (0.2): rules that recognise common problems and say what to do, groups of repeated
@@ -514,9 +518,11 @@ culprit was built in five steps:
    service, or your own API key) reads your project, read-only, and explains the root cause with evidence
    that culprit checks against your files.
 4. **The web viewer** (0.4): all of it in a browser tab, live, on your own computer.
-5. **More rules** (0.5, this release): over 250, adding messaging and caches, calls between services, gRPC,
+5. **More rules** (0.5): over 250, adding messaging and caches, calls between services, gRPC,
    more databases, cloud credentials, payments, .NET, PHP, Rails, deployment and build logs, and labels for the
    harmless lines that look like errors.
+6. **Frontend and JavaScript** (0.6, this release): React, Next.js, Vue and Nuxt, Angular, Vite and webpack,
+   ES modules, Express, and the JavaScript tooling in CI.
 
 ## Reporting bugs
 

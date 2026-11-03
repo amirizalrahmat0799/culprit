@@ -19,9 +19,9 @@ Or without installing: `npx culprit-cli app.log`
 
 culprit understands JSON logs (Spring Boot, pino, zap, slog, python-json-logger), logfmt, Spring Boot and
 logback's default patterns, Python, Go, PostgreSQL, and nginx and Apache access logs. It keeps Java, Python and
-Go stack traces in one piece and shows the first frame that's in **your** code. Over 250 rules recognise known
+Go stack traces in one piece and shows the first frame that's in **your** code. Over 290 rules recognise known
 problems (Spring Boot and calls between services, Hibernate, Flyway, HikariCP, Oracle, PostgreSQL, MySQL, SQL
-Server, MongoDB, Elasticsearch, Kafka, RabbitMQ, Redis, gRPC, AWS, Google Cloud, Azure, Stripe, .NET, PHP and
+Server, MongoDB, Elasticsearch, React, Next.js, Vue, Nuxt, Angular, Vite, webpack, Kafka, RabbitMQ, Redis, gRPC, AWS, Google Cloud, Azure, Stripe, .NET, PHP and
 Laravel, Rails, Node, Python, Go, Docker, Kubernetes, systemd, nginx, Envoy, HAProxy, and build and CI logs), explain them, and point at the error that started the
 cascade.
 
